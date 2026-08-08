@@ -10,3 +10,6 @@ evidence/*.json
 book.jsonl
 book.sqlite
 data/
+BASIS-PROJECT.md
+BASIS-4-DAY-BUILD-PLAN.md
+package-lock.json

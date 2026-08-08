@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Basis — The Open Book</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'SF Mono', 'Fira Code', monospace; background: #0a0a0a; color: #e0e0e0; padding: 2rem; line-height: 1.6; }
+    h1 { color: #00ff88; font-size: 1.8rem; margin-bottom: 0.5rem; }
+    h2 { color: #88ccff; font-size: 1.1rem; margin: 2rem 0 1rem; border-bottom: 1px solid #333; padding-bottom: 0.5rem; }
+    .subtitle { color: #888; font-size: 0.9rem; margin-bottom: 2rem; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.5rem; margin-bottom: 2rem; }
+    .card { background: #151515; border: 1px solid #2a2a2a; border-radius: 8px; padding: 1.5rem; }
+    .card-title { color: #888; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 0.5rem; }
+    .card-value { color: #fff; font-size: 2rem; font-weight: bold; }
+    .card-detail { color: #666; font-size: 0.8rem; margin-top: 0.5rem; }
+    .green { color: #00ff88; }
+    .red { color: #ff4444; }
+    .yellow { color: #ffcc00; }
+    .blue { color: #88ccff; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+    th, td { padding: 0.6rem 0.8rem; text-align: left; border-bottom: 1px solid #222; }
+    th { color: #888; text-transform: uppercase; letter-spacing: 0.05em; font-size: 0.7rem; }
+    td { color: #ccc; }
+    .tag { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 3px; font-size: 0.7rem; }
+    .tag-settled { background: #0a3320; color: #00ff88; }
+    .tag-failed { background: #330a0a; color: #ff4444; }
+    .tag-late { background: #332a0a; color: #ffcc00; }
+    .audit-box { background: #0a1520; border: 1px solid #1a3a50; border-radius: 8px; padding: 1.5rem; margin-top: 1rem; }
+    .hash { font-size: 0.7rem; color: #556; word-break: break-all; }
+    .verify-btn { background: #1a3a20; color: #00ff88; border: 1px solid #00ff88; padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer; font-family: inherit; margin-top: 1rem; }
+    .verify-btn:hover { background: #2a4a30; }
+    #verify-result { margin-top: 0.5rem; font-size: 0.8rem; }
+    .separator { border: none; border-top: 1px solid #222; margin: 2rem 0; }
+    a { color: #88ccff; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .live-tag { background: #0a3320; color: #00ff88; padding: 0.2rem 0.6rem; border-radius: 3px; font-size: 0.7rem; margin-left: 0.5rem; }
+    .backtest-tag { background: #1a1a30; color: #8888ff; padding: 0.2rem 0.6rem; border-radius: 3px; font-size: 0.7rem; margin-left: 0.5rem; }
+  </style>
+</head>
+<body>
+  <h1>Basis — The Open Book</h1>
+  <p class="subtitle">Execution, Priced. Every quote, order, and transaction — transparent.</p>
+
+  <h2>Revenue & Economics <span class="live-tag">LIVE EXECUTION</span></h2>
+  <div class="grid">
+    <div class="card">
+      <div class="card-title">Gross Revenue (USDC)</div>
+      <div class="card-value" id="revenue">$0.00</div>
+      <div class="card-detail">Sum of all paid orders</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Market Gas Cost</div>
+      <div class="card-value" id="gas-cost">$0.00</div>
+      <div class="card-detail">What txs would cost at market price</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Realized Basis Cost</div>
+      <div class="card-value" id="realized-cost">$0.00</div>
+      <div class="card-detail">Actual funds consumed (sponsored = $0)</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Realized Margin</div>
+      <div class="card-value green" id="margin">100%</div>
+      <div class="card-detail">Revenue − realized cost</div>
+    </div>
+  </div>
+
+  <h2>Reliability</h2>
+  <div class="grid">
+    <div class="card">
+      <div class="card-title">Total Executions</div>
+      <div class="card-value" id="total-exec">0</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Deadline Hit Rate</div>
+      <div class="card-value green" id="hit-rate">0%</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Success Rate</div>
+      <div class="card-value green" id="success-rate">0%</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Refunds Issued</div>
+      <div class="card-value" id="refunds">0</div>
+    </div>
+  </div>
+
+  <h2>Execution Tape</h2>
+  <table id="tape-table">
+    <thead>
+      <tr><th>Order</th><th>Job</th><th>Tier</th><th>Price</th><th>Status</th><th>Tx</th><th>Gas</th></tr>
+    </thead>
+    <tbody id="tape-body"></tbody>
+  </table>
+
+  <h2>Pricing Quality <span class="backtest-tag">HISTORICAL BACKTEST</span></h2>
+  <div class="grid">
+    <div class="card">
+      <div class="card-title">Quote Error P50</div>
+      <div class="card-value" id="error-p50">—</div>
+      <div class="card-detail">Median overpricing vs actual gas</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Quote Error P95</div>
+      <div class="card-value" id="error-p95">—</div>
+      <div class="card-detail">95th percentile overpricing</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Underpricing Events</div>
+      <div class="card-value green" id="underprice">0</div>
+      <div class="card-detail">Times actual exceeded quote</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Backtest Blocks</div>
+      <div class="card-value" id="backtest-blocks">—</div>
+      <div class="card-detail">Historical blocks replayed</div>
+    </div>
+  </div>
+
+  <h2>Audit Verification</h2>
+  <div class="audit-box">
+    <div class="card-title">Hash Chain Status</div>
+    <div style="margin-top:0.5rem;">
+      <span>Events: <strong id="chain-length">0</strong></span> &nbsp;|&nbsp;
+      <span>Last hash: <code class="hash" id="last-hash">0000...0000</code></span>
+    </div>
+    <button class="verify-btn" onclick="verifyChain()">▶ Verify Audit Chain</button>
+    <div id="verify-result"></div>
+  </div>
+
+  <hr class="separator">
+  <p style="color:#555;font-size:0.75rem;">Basis — Execution, Priced. Open-source at <a href="https://github.com/hicksonhaziel/Basis">github.com/hicksonhaziel/Basis</a></p>
+
+  <script type="module" src="app.mjs"></script>
+</body>
+</html>

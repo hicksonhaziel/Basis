@@ -1,0 +1,36 @@
+{
+  "name": "basis",
+  "version": "0.1.0",
+  "description": "Execution, Priced — gas-underwritten deadline execution through KeeperHub",
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "dev": "tsc --watch",
+    "test": "node --test --experimental-strip-types 'test/**/*.test.ts'",
+    "test:unit": "node --test --experimental-strip-types 'test/unit/**/*.test.ts'",
+    "test:contract": "node --test --experimental-strip-types 'test/contract/**/*.test.ts'",
+    "test:integration": "node --test --experimental-strip-types 'test/integration/**/*.test.ts'",
+    "start": "node --experimental-strip-types src/api/server.ts",
+    "quote": "node --experimental-strip-types src/cli/quote.ts",
+    "execute": "node --experimental-strip-types src/cli/execute.ts",
+    "verify:book": "node --experimental-strip-types src/cli/verify-book.ts",
+    "backtest:replay": "node --experimental-strip-types backtest/replay.ts",
+    "dashboard": "npx serve dashboard"
+  },
+  "dependencies": {
+    "better-sqlite3": "11.7.0",
+    "decimal.js": "10.4.3",
+    "fastify": "5.2.1",
+    "@fastify/type-provider-typebox": "5.1.0",
+    "@sinclair/typebox": "0.34.14",
+    "viem": "2.23.2"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "7.6.12",
+    "@types/node": "22.10.5",
+    "typescript": "5.7.3"
+  }
+}

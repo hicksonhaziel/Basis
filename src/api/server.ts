@@ -9,6 +9,7 @@ import { loadEnv } from '../config/env.ts';
 import { registry } from '../adapters/registry.ts';
 import { erc20TransferAdapter } from '../adapters/erc20-transfer.ts';
 import { wethWrapAdapter } from '../adapters/weth-wrap.ts';
+import { wethUnwrapAdapter } from '../adapters/weth-unwrap.ts';
 import { KeeperHubClient } from '../keeperhub/client.ts';
 import { Ledger } from '../ledger/database.ts';
 import { BasisExecutor } from '../executor/execute.ts';
@@ -24,6 +25,7 @@ async function main(): Promise<void> {
   // Register adapters
   registry.register(erc20TransferAdapter);
   registry.register(wethWrapAdapter);
+  registry.register(wethUnwrapAdapter);
 
   // Create infrastructure
   const keeperHubClient = new KeeperHubClient({

@@ -13,6 +13,7 @@ import type { Quote } from '../../quoter/quote.ts';
 const OrderRequestBody = Type.Object({
   quoteId: Type.String({ minLength: 1 }),
   paymentTxHash: Type.Optional(Type.String()),
+  paymentTier: Type.Optional(Type.String()),
 });
 
 export function registerOrderRoutes(
@@ -67,6 +68,14 @@ export function registerOrderRoutes(
       // Validate: not expired
       if (isQuoteExpired(quote)) {
         return reply.status(400).send({ error: `Quote expired at ${quote.expiresAt}` });
+      }
+
+      // Validate: payment tier matches (if buyer specifies it)
+      const { paymentTier } = request.body as { quoteId: string; paymentTxHash?: string; paymentTier?: string };
+      if (paymentTier && paymentTier !== quote.paymentTier) {
+        return reply.status(400).send({
+          error: `Payment tier mismatch: quote requires ${quote.paymentTier}, got ${paymentTier}`,
+        });
       }
 
       // Validate: signature (uses signing key from env, executor handles this internally)

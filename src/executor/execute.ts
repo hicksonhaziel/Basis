@@ -60,6 +60,7 @@ export interface ExecutionResult {
   gasUsed?: string;
   sponsored: boolean;
   error?: string;
+  deadlineHit?: boolean;
 }
 
 // ─── Executor ────────────────────────────────────────────────────────────────
@@ -315,28 +316,50 @@ export class BasisExecutor {
     // 8. Verify receipt and record result
     const txHash = finalStatus.transactionHash;
     const isSuccess = finalStatus.status === 'completed';
+    const completedAt = finalStatus.completedAt ?? new Date().toISOString();
 
-    if (isSuccess) {
+    // Check deadline
+    const deadlineMissed = isSuccess && new Date(completedAt) > new Date(quote.deadlineAt);
+
+    if (isSuccess && !deadlineMissed) {
       this.ledger.updateExecution(executionId, {
         state: 'completed',
         transactionHash: txHash,
         gasUsedWei: finalStatus.gasUsedWei,
         sponsored: finalStatus.sponsored,
-        completedAt: finalStatus.completedAt,
+        completedAt,
       });
-      this.ledger.updateOrderState(orderId, 'completed');
+      this.ledger.updateOrderState(orderId, 'SETTLED');
       this.ledger.appendEvent('EXECUTION_VERIFIED', executionId, {
         transactionHash: txHash,
         gasUsedWei: finalStatus.gasUsedWei,
         sponsored: finalStatus.sponsored,
+        deadlineHit: true,
+      });
+    } else if (isSuccess && deadlineMissed) {
+      this.ledger.updateExecution(executionId, {
+        state: 'completed',
+        transactionHash: txHash,
+        gasUsedWei: finalStatus.gasUsedWei,
+        sponsored: finalStatus.sponsored,
+        completedAt,
+      });
+      this.ledger.updateOrderState(orderId, 'LATE');
+      this.ledger.appendEvent('EXECUTION_VERIFIED', executionId, {
+        transactionHash: txHash,
+        gasUsedWei: finalStatus.gasUsedWei,
+        sponsored: finalStatus.sponsored,
+        deadlineHit: false,
+        deadlineAt: quote.deadlineAt,
+        completedAt,
       });
     } else {
       this.ledger.updateExecution(executionId, {
         state: 'failed',
         error: finalStatus.error ?? 'Unknown failure',
-        completedAt: finalStatus.completedAt,
+        completedAt,
       });
-      this.ledger.updateOrderState(orderId, 'failed');
+      this.ledger.updateOrderState(orderId, 'FAILED');
       this.ledger.appendEvent('EXECUTION_FAILED', executionId, {
         error: finalStatus.error,
       });
@@ -352,6 +375,7 @@ export class BasisExecutor {
       gasUsed: finalStatus.gasUsedWei,
       sponsored: finalStatus.sponsored,
       error: isSuccess ? undefined : (finalStatus.error ?? undefined),
+      deadlineHit: isSuccess ? !deadlineMissed : undefined,
     };
   }
 

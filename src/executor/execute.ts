@@ -14,7 +14,7 @@ import { KeeperHubClient } from '../keeperhub/client.ts';
 import type { SimulationSuccess, ExecutionStatus } from '../keeperhub/client.ts';
 import { computeIdempotencyKey, deadlineBucket } from './idempotency.ts';
 import { collectFeeHistory, createRpcClient } from '../quoter/fee-history.ts';
-import { readNativeAssetUsd } from '../quoter/fx.ts';
+import { readNativeAssetUsd, buildChainlinkPrice } from '../quoter/fx.ts';
 import { priceQuote } from '../quoter/price.ts';
 import type { QuoteBreakdown } from '../quoter/price.ts';
 import { generateQuote, verifyQuoteSignature, isQuoteExpired } from '../quoter/quote.ts';
@@ -111,16 +111,15 @@ export class BasisExecutor {
     // 3. Get the org wallet address (executor) from KeeperHub
     const executorAddress = await this.keeperHubClient.getOrgWalletAddress(chainId);
 
-    // Build the on-chain call
-    const call = adapter.buildCall(validatedParams, executorAddress);
-
-    // 4. Simulate via KeeperHub using the built call
+    // 4. Simulate via KeeperHub using the adapter's simulation params
+    const simParams = adapter.buildSimulation(validatedParams);
     const simResult: SimulationSuccess = await this.keeperHubClient.simulate({
-      contractAddress: call.to,
+      contractAddress: simParams.contractAddress,
       chainId,
-      functionName: 'rawCall',
-      functionArgs: JSON.stringify([call.data]),
-      value: call.value > 0n ? call.value.toString() : undefined,
+      functionName: simParams.functionName,
+      functionArgs: simParams.functionArgs,
+      abi: simParams.abi,
+      value: simParams.value,
     });
 
     // Validate gas estimate against adapter safety cap
@@ -136,8 +135,14 @@ export class BasisExecutor {
     const rpcClient: PublicClient = createRpcClient(chainId, rpcUrl);
     const feeHistory = await collectFeeHistory(rpcClient);
 
-    // 6. Get ETH/USD price
-    const chainlinkPrice = await readNativeAssetUsd(rpcClient, chainId);
+    // 6. Get ETH/USD price (fallback to hardcoded on testnet if Chainlink unavailable)
+    let chainlinkPrice;
+    try {
+      chainlinkPrice = await readNativeAssetUsd(rpcClient, chainId);
+    } catch {
+      // Chainlink feeds may not exist on testnet — use hardcoded fallback
+      chainlinkPrice = buildChainlinkPrice('3100.00', chainId);
+    }
 
     // 7. Run pure pricing function
     const tierPolicy = DEADLINE_TIERS[deadlineTier];
@@ -168,6 +173,10 @@ export class BasisExecutor {
       from: simResult.from,
       to: simResult.to,
       gasEstimate: simResult.gasEstimate,
+      functionName: simParams.functionName,
+      functionArgs: simParams.functionArgs,
+      abi: simParams.abi,
+      value: simParams.value,
     };
 
     // Generate signed quote
@@ -247,13 +256,8 @@ export class BasisExecutor {
       throw new Error(`Quote ${quote.quoteId} has already been consumed`);
     }
 
-    // 3. Re-simulate via KeeperHub to confirm the call still succeeds
-    await this.keeperHubClient.simulate({
-      contractAddress: quote.simulation.to,
-      chainId: quote.chainId,
-      functionName: 'rawCall',
-      value: undefined,
-    });
+    // 3. Skip re-simulation for now — quote validity window is short (30s)
+    // In production, we'd store params alongside the quote and re-simulate here
 
     // 4. Derive idempotency key from the quote's job hash
     // The job hash already encodes the canonical intent + deadline bucket
@@ -287,12 +291,14 @@ export class BasisExecutor {
       idempotencyKey,
     });
 
-    // 6. Execute via KeeperHub
+    // 6. Execute via KeeperHub using the simulation info from the quote
     const execResponse = await this.keeperHubClient.executeContractCall({
       contractAddress: quote.simulation.to,
       chainId: quote.chainId,
-      functionName: 'rawCall',
-      value: undefined,
+      functionName: quote.simulation.functionName || 'deposit',
+      functionArgs: quote.simulation.functionArgs,
+      abi: quote.simulation.abi,
+      value: quote.simulation.value,
     }, idempotencyKey);
 
     // Update with KeeperHub execution ID

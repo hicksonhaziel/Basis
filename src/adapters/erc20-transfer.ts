@@ -13,6 +13,7 @@ import type {
   JobAdapter,
   AdapterMeta,
   CallParams,
+  SimulationParams,
   CanonicalFields,
   PostconditionCheck,
   PostconditionReceipt,
@@ -98,6 +99,15 @@ export const erc20TransferAdapter: JobAdapter<Erc20TransferParams> = {
       data,
       value: 0n,
       from: executorAddress,
+    };
+  },
+
+  buildSimulation(params: Erc20TransferParams): SimulationParams {
+    return {
+      contractAddress: params.token,
+      functionName: 'transfer',
+      functionArgs: JSON.stringify([params.to, params.amount.toString()]),
+      abi: JSON.stringify(ERC20_TRANSFER_ABI),
     };
   },
 

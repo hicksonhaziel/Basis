@@ -165,6 +165,8 @@ export class KeeperHubClient {
         }
         throw new SimulationRevertError(data.revertReason, data.from, data.to, data);
       }
+      // 400 but not a wouldRevert — some other validation error
+      throw new KeeperHubError(`Simulation failed: ${data.error || 'Unknown'}`, 400, data);
     }
 
     await this.handleCommonErrors(res);

@@ -1,6 +1,6 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import type { JobAdapter, CallParams, CanonicalFields, PostconditionCheck, PostconditionReceipt } from '../../src/adapters/adapter.ts';
+import type { JobAdapter, CallParams, SimulationParams, CanonicalFields, PostconditionCheck, PostconditionReceipt } from '../../src/adapters/adapter.ts';
 
 // We can't easily reset the singleton, so we test via a fresh import of the class logic.
 // For this test we'll create a minimal mock adapter.
@@ -25,6 +25,13 @@ function makeMockAdapter(overrides: Partial<JobAdapter['meta']> = {}): JobAdapte
         data: '0x',
         value: 0n,
         from: executorAddress,
+      };
+    },
+    buildSimulation(_params): SimulationParams {
+      return {
+        contractAddress: '0x0000000000000000000000000000000000000001',
+        functionName: 'mock',
+        abi: '[]',
       };
     },
     canonicalIntent(_params, chainId, deadlineBucket): CanonicalFields {

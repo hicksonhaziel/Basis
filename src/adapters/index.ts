@@ -2,6 +2,7 @@ export type {
   JobAdapter,
   AdapterMeta,
   CallParams,
+  SimulationParams,
   CanonicalFields,
   PostconditionCheck,
   PostconditionReceipt,

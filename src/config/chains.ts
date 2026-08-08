@@ -44,7 +44,7 @@ export const CHAINS: Record<number, ChainConfig> = {
     chainId: 84532,
     name: 'base-sepolia',
     nativeAsset: 'ETH',
-    chainlinkEthUsd: '0x4aDC67D69a6e06BB41A67C8Ca8E9e0f523aB8c0A',
+    chainlinkEthUsd: '0x4adc67d69a6e06bb41a67c8ca8e9e0f523ab8c0a',
     blockTimeSeconds: 2,
     testnet: true,
   },

@@ -13,6 +13,7 @@ import type {
   JobAdapter,
   AdapterMeta,
   CallParams,
+  SimulationParams,
   CanonicalFields,
   PostconditionCheck,
   PostconditionReceipt,
@@ -98,6 +99,17 @@ export const wethWrapAdapter: JobAdapter<WethWrapParams> = {
       data,
       value: params.amount,
       from: executorAddress,
+    };
+  },
+
+  buildSimulation(params: WethWrapParams): SimulationParams {
+    // Convert wei to ether string for KeeperHub
+    const valueEth = (Number(params.amount) / 1e18).toFixed(18).replace(/0+$/, '').replace(/\.$/, '');
+    return {
+      contractAddress: params.weth,
+      functionName: 'deposit',
+      abi: JSON.stringify(WETH_DEPOSIT_ABI),
+      value: valueEth,
     };
   },
 

@@ -37,6 +37,19 @@ export interface CallParams {
   from: `0x${string}`;
 }
 
+export interface SimulationParams {
+  /** Target contract address */
+  contractAddress: string;
+  /** Function name for KeeperHub simulation */
+  functionName: string;
+  /** JSON-stringified function args array */
+  functionArgs?: string;
+  /** JSON-stringified ABI */
+  abi: string;
+  /** Native value in ether units (e.g. "0.0001") or undefined */
+  value?: string;
+}
+
 export interface CanonicalFields {
   /** Fields contributing to the canonical intent hash, in order */
   fields: string[];
@@ -68,6 +81,12 @@ export interface JobAdapter<TParams = unknown> {
    * This is what gets simulated and executed.
    */
   buildCall(params: TParams, executorAddress: `0x${string}`): CallParams;
+
+  /**
+   * Build KeeperHub simulation/execution params.
+   * KeeperHub needs function name + args + ABI, not raw calldata.
+   */
+  buildSimulation(params: TParams): SimulationParams;
 
   /**
    * Derive the canonical intent fields for idempotency key generation.

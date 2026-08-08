@@ -73,6 +73,14 @@ export interface SimulationSummary {
   from: string;
   to: string;
   gasEstimate: string;
+  /** Stored for execution — function name */
+  functionName?: string;
+  /** Stored for execution — function args JSON */
+  functionArgs?: string;
+  /** Stored for execution — ABI JSON */
+  abi?: string;
+  /** Stored for execution — native value in ether */
+  value?: string;
 }
 
 export interface QuoteParams {

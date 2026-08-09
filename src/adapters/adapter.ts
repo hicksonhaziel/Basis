@@ -74,7 +74,7 @@ export interface JobAdapter<TParams = unknown> {
    * Validate raw job parameters. Throws if invalid.
    * Returns the typed, normalized params.
    */
-  validateParams(raw: unknown): TParams;
+  validateParams(raw: unknown, chainId?: number): TParams;
 
   /**
    * Build the on-chain call from validated params.
@@ -110,6 +110,8 @@ export interface JobAdapter<TParams = unknown> {
 }
 
 export interface PostconditionReceipt {
+  /** Expected Basis execution wallet */
+  executorAddress: `0x${string}`;
   /** Transaction hash */
   transactionHash: `0x${string}`;
   /** Whether the transaction succeeded */

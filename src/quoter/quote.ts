@@ -20,6 +20,7 @@ import { createHmac, randomUUID } from 'node:crypto';
 import { Decimal } from 'decimal.js';
 import type { QuoteBreakdown } from './price.ts';
 import type { DeadlineTier } from '../config/policy.ts';
+import { stableJson, type CanonicalExecutionIntent } from '../executor/intent.ts';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -48,6 +49,8 @@ export interface Quote {
   breakdown: QuoteBreakdownSerialized;
   /** Simulation result summary */
   simulation: SimulationSummary;
+  /** Exact canonical call and policy-bound adapter data. */
+  intent: CanonicalExecutionIntent;
   /** HMAC signature over the quote payload */
   signature: string;
   /** When this quote was issued (ISO timestamp) */
@@ -94,6 +97,7 @@ export interface QuoteParams {
   nativeAssetUsd: Decimal;
   breakdown: QuoteBreakdown;
   simulation: SimulationSummary;
+  intent: CanonicalExecutionIntent;
 }
 
 // ─── Quote Generation ────────────────────────────────────────────────────────
@@ -134,6 +138,7 @@ export function generateQuote(params: QuoteParams, signingKey: string): Quote {
     pricingModelVersion: params.breakdown.pricingModelVersion,
     breakdown,
     simulation: params.simulation,
+    intent: params.intent,
     issuedAt,
   };
 
@@ -188,8 +193,7 @@ export function validateQuoteForOrder(
  * The payload is JSON-serialized with sorted keys for determinism.
  */
 function signQuote(payload: Omit<Quote, 'signature'>, signingKey: string): string {
-  // Deterministic serialization: sort keys at all levels
-  const canonical = JSON.stringify(payload, Object.keys(payload).sort());
+  const canonical = stableJson(payload);
   const hmac = createHmac('sha256', signingKey);
   hmac.update(canonical, 'utf8');
   return hmac.digest('hex');

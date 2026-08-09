@@ -234,7 +234,7 @@ export class KeeperHubClient {
     if (res.status === 409) {
       const data = (await res.json()) as { code?: string; originalExecutionId?: string };
       if (data.code === 'idempotency_in_progress') {
-        throw new IdempotencyInProgressError(data);
+        throw new IdempotencyInProgressError(data.originalExecutionId ?? null, data);
       }
       if (data.code === 'idempotency_conflict') {
         throw new IdempotencyConflictError(data.originalExecutionId ?? null, data);
@@ -263,7 +263,7 @@ export class KeeperHubClient {
     if (res.status === 409) {
       const data = (await res.json()) as { code?: string; originalExecutionId?: string };
       if (data.code === 'idempotency_in_progress') {
-        throw new IdempotencyInProgressError(data);
+        throw new IdempotencyInProgressError(data.originalExecutionId ?? null, data);
       }
       if (data.code === 'idempotency_conflict') {
         throw new IdempotencyConflictError(data.originalExecutionId ?? null, data);

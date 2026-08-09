@@ -147,9 +147,9 @@ describe('ledger/database', () => {
     assert.equal(row.state, 'PAID');
 
     // Update state
-    ledger.updateOrderState('o_test1', 'EXECUTING');
+    ledger.updateOrderState('o_test1', 'RESIMULATING');
     const updated = db.prepare('SELECT state FROM orders WHERE order_id = ?').get('o_test1') as { state: string };
-    assert.equal(updated.state, 'EXECUTING');
+    assert.equal(updated.state, 'RESIMULATING');
   });
 
   it('multiple events maintain chain integrity', () => {

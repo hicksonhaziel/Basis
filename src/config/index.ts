@@ -1,4 +1,4 @@
-export { loadEnv, type BasisEnv } from './env.ts';
+export { loadEnv, type BasisEnv, type Erc20TransferAllowance } from './env.ts';
 export { CHAINS, getChain, type ChainConfig } from './chains.ts';
 export {
   DEADLINE_TIERS,

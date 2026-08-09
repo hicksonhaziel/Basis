@@ -49,6 +49,20 @@ function makeQuoteParams(overrides: Partial<QuoteParams> = {}): QuoteParams {
       to: '0x2222222222222222222222222222222222222222',
       gasEstimate: '200000',
     },
+    intent: {
+      adapterName: 'erc20.transfer',
+      adapterVersion: '1.1.0',
+      chainId: 8453,
+      target: '0x2222222222222222222222222222222222222222',
+      functionName: 'transfer',
+      functionArgs: '[]',
+      abi: '[]',
+      calldata: '0x',
+      nativeValueWei: '0',
+      executorAddress: '0x1111111111111111111111111111111111111111',
+      deadlineAt: new Date(now.getTime() + 300_000).toISOString(),
+      validatedParams: {},
+    },
     ...overrides,
   };
 }
@@ -72,6 +86,12 @@ describe('quoter/quote', () => {
   it('signature verification with wrong key fails', () => {
     const quote = generateQuote(makeQuoteParams(), SIGNING_KEY);
     assert.equal(verifyQuoteSignature(quote, WRONG_KEY), false);
+  });
+
+  it('signature verification rejects nested canonical intent tampering', () => {
+    const quote = generateQuote(makeQuoteParams(), SIGNING_KEY);
+    quote.intent.target = '0x3333333333333333333333333333333333333333';
+    assert.equal(verifyQuoteSignature(quote, SIGNING_KEY), false);
   });
 
   it('expired quote detection works', () => {

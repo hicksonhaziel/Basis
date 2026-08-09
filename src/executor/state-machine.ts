@@ -1,72 +1,59 @@
-/**
- * Order State Machine.
- *
- * States:
- *   QUOTED → PAID → EXECUTING → SETTLED | FAILED | LATE → REFUND_PENDING → REFUNDED
- *
- * Transitions are explicit — invalid transitions throw.
- */
+/** Canonical deterministic order/execution lifecycle. */
 
 export type OrderState =
   | 'QUOTED'
+  | 'AUTHENTICATED_INGRESS'
   | 'PAID'
+  | 'RESIMULATING'
   | 'EXECUTING'
-  | 'SETTLED'
+  | 'VERIFYING'
+  | 'SUCCEEDED'
   | 'FAILED'
   | 'LATE'
+  | 'UNCERTAIN'
   | 'REFUND_PENDING'
   | 'REFUNDED'
-  | 'EXPIRED'
-  | 'REJECTED_AFTER_PAYMENT';
+  | 'REFUND_UNCERTAIN'
+  | 'EXPIRED';
 
-const VALID_TRANSITIONS: Record<OrderState, OrderState[]> = {
-  QUOTED: ['PAID', 'EXPIRED'],
-  PAID: ['EXECUTING', 'REJECTED_AFTER_PAYMENT'],
-  EXECUTING: ['SETTLED', 'FAILED', 'LATE'],
-  SETTLED: [],
+const VALID_TRANSITIONS: Readonly<Record<OrderState, readonly OrderState[]>> = {
+  QUOTED: ['AUTHENTICATED_INGRESS', 'PAID', 'EXPIRED'],
+  AUTHENTICATED_INGRESS: ['RESIMULATING'],
+  PAID: ['RESIMULATING'],
+  RESIMULATING: ['EXECUTING', 'REFUND_PENDING', 'FAILED'],
+  EXECUTING: ['VERIFYING', 'FAILED', 'UNCERTAIN'],
+  VERIFYING: ['SUCCEEDED', 'FAILED', 'LATE', 'UNCERTAIN'],
+  SUCCEEDED: [],
   FAILED: ['REFUND_PENDING'],
   LATE: ['REFUND_PENDING'],
-  REJECTED_AFTER_PAYMENT: ['REFUND_PENDING'],
-  REFUND_PENDING: ['REFUNDED'],
+  UNCERTAIN: ['VERIFYING', 'FAILED'],
+  REFUND_PENDING: ['REFUNDED', 'REFUND_UNCERTAIN'],
   REFUNDED: [],
+  REFUND_UNCERTAIN: [],
   EXPIRED: [],
 };
 
-/**
- * Check if a state transition is valid.
- */
 export function canTransition(from: OrderState, to: OrderState): boolean {
-  return VALID_TRANSITIONS[from]?.includes(to) ?? false;
+  return VALID_TRANSITIONS[from].includes(to);
 }
 
-/**
- * Transition an order state. Throws if the transition is invalid.
- */
 export function transition(from: OrderState, to: OrderState): OrderState {
-  if (!canTransition(from, to)) {
-    throw new Error(`Invalid state transition: ${from} → ${to}`);
-  }
+  if (!canTransition(from, to)) throw new Error(`Invalid state transition: ${from} → ${to}`);
   return to;
 }
 
-/**
- * Check if an order is in a terminal state (no further transitions possible).
- */
 export function isTerminal(state: OrderState): boolean {
-  return VALID_TRANSITIONS[state]?.length === 0;
+  return VALID_TRANSITIONS[state].length === 0;
 }
 
-/**
- * Check if an order is refundable (can move to REFUND_PENDING).
- */
 export function isRefundable(state: OrderState): boolean {
   return canTransition(state, 'REFUND_PENDING');
 }
 
-/**
- * Determine if execution missed its deadline.
- */
 export function checkDeadline(deadlineAt: string, completedAt: string | null): boolean {
-  if (!completedAt) return false;
-  return new Date(completedAt) > new Date(deadlineAt);
+  return completedAt !== null && new Date(completedAt).getTime() > new Date(deadlineAt).getTime();
+}
+
+export function assertOrderState(value: string): asserts value is OrderState {
+  if (!(value in VALID_TRANSITIONS)) throw new Error(`Unknown order state: ${value}`);
 }

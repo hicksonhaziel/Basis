@@ -1,48 +1,44 @@
-/**
- * POST /orders — Submit an order against a valid quote.
- */
+/** POST /orders — authenticated private-workflow ingress. This endpoint does not prove payment. */
 
-import { randomUUID } from 'node:crypto';
+import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { Type } from '@sinclair/typebox';
 import type { FastifyInstance } from 'fastify';
 import type { BasisExecutor } from '../../executor/execute.ts';
 import type { Ledger } from '../../ledger/database.ts';
-import { verifyQuoteSignature, isQuoteExpired } from '../../quoter/quote.ts';
+import { isQuoteExpired } from '../../quoter/quote.ts';
 import type { Quote } from '../../quoter/quote.ts';
 
-const OrderRequestBody = Type.Object({
-  quoteId: Type.String({ minLength: 1 }),
-  paymentTxHash: Type.Optional(Type.String()),
-  paymentTier: Type.Optional(Type.String()),
-});
+const INGRESS_SOURCE = 'keeperhub-private-workflow';
+const OrderRequestBody = Type.Object({ quoteId: Type.String({ minLength: 1 }) }, { additionalProperties: false });
+
+function secretMatches(header: string | undefined, expected: string): boolean {
+  if (!header?.startsWith('Bearer ')) return false;
+  const supplied = Buffer.from(header.slice(7));
+  const wanted = Buffer.from(expected);
+  return supplied.length === wanted.length && timingSafeEqual(supplied, wanted);
+}
 
 export function registerOrderRoutes(
   app: FastifyInstance,
   executor: BasisExecutor,
   ledger: Ledger,
+  orderIngressSecret: string,
 ): void {
-  app.post('/orders', {
-    schema: {
-      body: OrderRequestBody,
-    },
-  }, async (request, reply) => {
+  if (orderIngressSecret.length < 32) throw new Error('Order ingress secret must be at least 32 characters');
+
+  app.post('/orders', { schema: { body: OrderRequestBody } }, async (request, reply) => {
+    if (!secretMatches(request.headers.authorization, orderIngressSecret)) {
+      return reply.status(401).send({ error: 'Unauthorized order ingress' });
+    }
+    if (request.headers['x-basis-ingress-source'] !== INGRESS_SOURCE) {
+      return reply.status(403).send({ error: 'Missing trusted private-workflow ingress marker; this marker is not payment proof' });
+    }
+
     try {
-      const { quoteId, paymentTxHash } = request.body as {
-        quoteId: string;
-        paymentTxHash?: string;
-      };
+      const { quoteId } = request.body as { quoteId: string };
+      const quoteRow = ledger.getDb().prepare('SELECT * FROM quotes WHERE quote_id = ?').get(quoteId) as Record<string, unknown> | undefined;
+      if (!quoteRow) return reply.status(400).send({ error: `Quote not found: ${quoteId}` });
 
-      // Retrieve quote from ledger
-      const db = ledger.getDb();
-      const quoteRow = db.prepare(
-        'SELECT * FROM quotes WHERE quote_id = ?',
-      ).get(quoteId) as Record<string, unknown> | undefined;
-
-      if (!quoteRow) {
-        return reply.status(400).send({ error: `Quote not found: ${quoteId}` });
-      }
-
-      // Reconstruct the Quote object for signature verification
       const quote: Quote = {
         quoteId: quoteRow.quote_id as string,
         jobHash: quoteRow.job_hash as string,
@@ -56,60 +52,27 @@ export function registerOrderRoutes(
         pricingModelVersion: quoteRow.pricing_model_version as string,
         breakdown: JSON.parse(quoteRow.breakdown_json as string),
         simulation: JSON.parse(quoteRow.simulation_json as string),
+        intent: JSON.parse(quoteRow.intent_json as string),
         signature: quoteRow.signature as string,
         issuedAt: quoteRow.issued_at as string,
       };
 
-      // Validate: not consumed
-      if (quoteRow.consumed === 1) {
-        return reply.status(409).send({ error: `Quote ${quoteId} has already been consumed` });
-      }
+      if (quoteRow.consumed === 1) return reply.status(409).send({ error: `Quote ${quoteId} has already been consumed` });
+      if (isQuoteExpired(quote)) return reply.status(400).send({ error: `Quote expired at ${quote.expiresAt}` });
 
-      // Validate: not expired
-      if (isQuoteExpired(quote)) {
-        return reply.status(400).send({ error: `Quote expired at ${quote.expiresAt}` });
-      }
-
-      // Validate: payment tier matches (if buyer specifies it)
-      const { paymentTier } = request.body as { quoteId: string; paymentTxHash?: string; paymentTier?: string };
-      if (paymentTier && paymentTier !== quote.paymentTier) {
-        return reply.status(400).send({
-          error: `Payment tier mismatch: quote requires ${quote.paymentTier}, got ${paymentTier}`,
-        });
-      }
-
-      // Validate: signature (uses signing key from env, executor handles this internally)
-      // The executor.executeOrder will verify signature and expiry again as a safety check
-
-      const orderId = `ord_${randomUUID().replace(/-/g, '')}`;
-
-      const result = await executor.executeOrder(quote, orderId);
-
-      if (result.status === 'completed') {
-        return reply.status(200).send({
-          orderId: result.orderId,
-          status: result.status,
-          transactionHash: result.transactionHash,
-          executionId: result.executionId,
-          gasUsed: result.gasUsed,
-          sponsored: result.sponsored,
-        });
-      } else {
-        return reply.status(202).send({
-          orderId: result.orderId,
-          status: result.status,
-          executionId: result.executionId,
-          error: result.error,
-        });
-      }
+      const result = await executor.executeOrder(quote, `ord_${randomUUID().replace(/-/g, '')}`);
+      return reply.status(result.status === 'SUCCEEDED' ? 200 : 202).send({
+        orderId: result.orderId,
+        status: result.status,
+        transactionHash: result.transactionHash,
+        executionId: result.executionId,
+        gasUsed: result.gasUsed,
+        sponsored: result.sponsored,
+        error: result.error,
+      });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Unknown error';
-
-      // Idempotency or consumed errors → 409
-      if (message.includes('already been consumed') || message.includes('Idempotency')) {
-        return reply.status(409).send({ error: message });
-      }
-
+      if (message.includes('already been consumed') || message.includes('Idempotency')) return reply.status(409).send({ error: message });
       return reply.status(400).send({ error: message });
     }
   });

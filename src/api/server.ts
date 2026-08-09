@@ -7,7 +7,7 @@
 import Fastify from 'fastify';
 import { loadEnv } from '../config/env.ts';
 import { registry } from '../adapters/registry.ts';
-import { erc20TransferAdapter } from '../adapters/erc20-transfer.ts';
+import { createErc20TransferAdapter } from '../adapters/erc20-transfer.ts';
 import { wethWrapAdapter } from '../adapters/weth-wrap.ts';
 import { wethUnwrapAdapter } from '../adapters/weth-unwrap.ts';
 import { KeeperHubClient } from '../keeperhub/client.ts';
@@ -17,13 +17,17 @@ import { registerQuoteRoutes } from './routes/quote.ts';
 import { registerOrderRoutes } from './routes/order.ts';
 import { registerStatusRoutes } from './routes/status.ts';
 import { registerMetricsRoutes } from './routes/metrics.ts';
+import { ReconciliationWorker } from '../reconciliation/worker.ts';
+import { createRpcClient } from '../quoter/fee-history.ts';
 
 async function main(): Promise<void> {
   // Load environment
   const env = loadEnv();
 
-  // Register adapters
-  registry.register(erc20TransferAdapter);
+  // Register only policy-bounded adapters. ERC-20 transfers stay disabled with no allowlist.
+  if (env.erc20TransferAllowlist.length > 0) {
+    registry.register(createErc20TransferAdapter(env.erc20TransferAllowlist));
+  }
   registry.register(wethWrapAdapter);
   registry.register(wethUnwrapAdapter);
 
@@ -45,6 +49,25 @@ async function main(): Promise<void> {
     rpcUrls: env.rpcUrls,
   });
 
+  const reconciler = new ReconciliationWorker(
+    ledger,
+    keeperHubClient,
+    (chainId) => {
+      const url = env.rpcUrls[chainId];
+      if (!url) throw new Error(`No RPC URL configured for chain ${chainId}`);
+      return createRpcClient(chainId, url);
+    },
+  );
+  await reconciler.runOnce(true);
+  let reconciliationRunning = false;
+  const reconciliationTimer = setInterval(() => {
+    if (reconciliationRunning) return;
+    reconciliationRunning = true;
+    void reconciler.runOnce(false)
+      .catch((error) => app.log.error(error, 'Deterministic reconciliation failed'))
+      .finally(() => { reconciliationRunning = false; });
+  }, 30_000);
+
   // Create Fastify instance
   const app = Fastify({
     logger: true,
@@ -52,7 +75,7 @@ async function main(): Promise<void> {
 
   // Register routes
   registerQuoteRoutes(app, executor, ledger);
-  registerOrderRoutes(app, executor, ledger);
+  registerOrderRoutes(app, executor, ledger, env.orderIngressSecret);
   registerStatusRoutes(app, executor, ledger);
   registerMetricsRoutes(app, executor, ledger);
 
@@ -68,6 +91,7 @@ async function main(): Promise<void> {
   // Graceful shutdown
   const shutdown = async (): Promise<void> => {
     app.log.info('Shutting down...');
+    clearInterval(reconciliationTimer);
     await app.close();
     ledger.close();
     process.exit(0);

@@ -25,10 +25,11 @@ export function registerMetricsRoutes(
     const executionStats = db.prepare(`
       SELECT
         COUNT(*) as total,
-        SUM(CASE WHEN state = 'completed' THEN 1 ELSE 0 END) as completed,
-        SUM(CASE WHEN state = 'failed' THEN 1 ELSE 0 END) as failed
+        SUM(CASE WHEN state = 'SUCCEEDED' THEN 1 ELSE 0 END) as succeeded,
+        SUM(CASE WHEN state IN ('FAILED', 'REFUND_PENDING') THEN 1 ELSE 0 END) as failed,
+        SUM(CASE WHEN state = 'UNCERTAIN' THEN 1 ELSE 0 END) as uncertain
       FROM executions
-    `).get() as { total: number; completed: number; failed: number };
+    `).get() as { total: number; succeeded: number; failed: number; uncertain: number };
 
     const totalRefunds = (db.prepare(
       'SELECT COUNT(*) as count FROM refunds',
@@ -46,8 +47,9 @@ export function registerMetricsRoutes(
       },
       executions: {
         total: executionStats.total,
-        completed: executionStats.completed ?? 0,
+        succeeded: executionStats.succeeded ?? 0,
         failed: executionStats.failed ?? 0,
+        uncertain: executionStats.uncertain ?? 0,
       },
       refunds: {
         total: totalRefunds,

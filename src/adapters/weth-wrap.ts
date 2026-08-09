@@ -1,167 +1,44 @@
-/**
- * Adapter: weth.wrap
- *
- * Deterministic contract-write benchmark.
- * Wraps native ETH into WETH by calling deposit() with value.
- *
- * This is a benchmark adapter. It generates repeatable data for pricing tests.
- * Uses Basis-owned ETH.
- */
-
+/** Chain-pinned, value-capped WETH wrap adapter. */
 import { encodeFunctionData } from 'viem';
-import type {
-  JobAdapter,
-  AdapterMeta,
-  CallParams,
-  SimulationParams,
-  CanonicalFields,
-  PostconditionCheck,
-  PostconditionReceipt,
-} from './adapter.ts';
+import type { JobAdapter, AdapterMeta, CallParams, SimulationParams, CanonicalFields, PostconditionCheck, PostconditionReceipt } from './adapter.ts';
 
-export interface WethWrapParams {
-  /** WETH contract address */
-  weth: `0x${string}`;
-  /** Amount of ETH to wrap, in wei */
-  amount: bigint;
-}
-
-/** Well-known WETH addresses by chain */
+export interface WethWrapParams { chainId: number; weth: `0x${string}`; amount: bigint; }
 export const WETH_ADDRESSES: Record<number, `0x${string}`> = {
   1: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
   8453: '0x4200000000000000000000000000000000000006',
   11155111: '0x7b79995e5f793A07Bc00c21412e50Ecae098E7f9',
   84532: '0x4200000000000000000000000000000000000006',
 };
-
-const WETH_DEPOSIT_ABI = [
-  {
-    name: 'deposit',
-    type: 'function',
-    stateMutability: 'payable',
-    inputs: [],
-    outputs: [],
-  },
+export const MAX_WETH_AMOUNT_WEI = 10_000_000_000_000_000n; // 0.01 ETH
+const ABI = [
+  { name: 'deposit', type: 'function', stateMutability: 'payable', inputs: [], outputs: [] },
+  { name: 'Deposit', type: 'event', inputs: [{ name: 'dst', type: 'address', indexed: true }, { name: 'wad', type: 'uint256', indexed: false }] },
 ] as const;
+const meta: AdapterMeta = { jobType: 'weth.wrap', version: '1.1.0', description: 'Wrap capped native ETH using chain-pinned WETH', mode: 'permissionless', maxGasEstimate: 60_000n, sendsNativeValue: true, supportedChains: Object.keys(WETH_ADDRESSES).map(Number) };
 
-const meta: AdapterMeta = {
-  jobType: 'weth.wrap',
-  version: '1.0.0',
-  description: 'Wrap native ETH into WETH via deposit()',
-  mode: 'permissionless',
-  maxGasEstimate: 60_000n,
-  sendsNativeValue: true,
-  supportedChains: [1, 8453, 11155111, 84532],
-};
+export function weiToEtherString(wei: bigint): string {
+  const whole = wei / 1_000_000_000_000_000_000n;
+  const fraction = (wei % 1_000_000_000_000_000_000n).toString().padStart(18, '0').replace(/0+$/, '');
+  return fraction ? `${whole}.${fraction}` : whole.toString();
+}
 
 export const wethWrapAdapter: JobAdapter<WethWrapParams> = {
   meta,
-
-  validateParams(raw: unknown): WethWrapParams {
-    if (!raw || typeof raw !== 'object') {
-      throw new Error('weth.wrap: params must be an object');
-    }
+  validateParams(raw: unknown, chainId?: number): WethWrapParams {
+    if (!raw || typeof raw !== 'object') throw new Error('weth.wrap: params must be an object');
     const p = raw as Record<string, unknown>;
-
-    let weth: `0x${string}`;
-    if (typeof p.weth === 'string' && p.weth.match(/^0x[a-fA-F0-9]{40}$/)) {
-      weth = p.weth.toLowerCase() as `0x${string}`;
-    } else if (typeof p.chainId === 'number' && WETH_ADDRESSES[p.chainId]) {
-      weth = WETH_ADDRESSES[p.chainId]!;
-    } else {
-      throw new Error('weth.wrap: weth must be a valid address, or provide chainId for default');
-    }
-
+    if ('weth' in p) throw new Error('weth.wrap: caller-selected WETH address is not allowed');
+    if (!chainId || !WETH_ADDRESSES[chainId]) throw new Error(`weth.wrap: unsupported chain ${chainId}`);
     let amount: bigint;
-    if (typeof p.amount === 'bigint') {
-      amount = p.amount;
-    } else if (typeof p.amount === 'string') {
-      amount = BigInt(p.amount);
-    } else {
-      throw new Error('weth.wrap: amount must be a bigint or numeric string');
-    }
-
-    if (amount <= 0n) {
-      throw new Error('weth.wrap: amount must be positive');
-    }
-
-    return { weth, amount };
+    try { amount = typeof p.amount === 'bigint' ? p.amount : typeof p.amount === 'string' && /^\d+$/.test(p.amount) ? BigInt(p.amount) : 0n; }
+    catch { amount = 0n; }
+    if (amount <= 0n) throw new Error('weth.wrap: amount must be a positive atomic-unit string or bigint');
+    if (amount > MAX_WETH_AMOUNT_WEI) throw new Error(`weth.wrap: amount exceeds maximum ${MAX_WETH_AMOUNT_WEI}`);
+    return { chainId, weth: WETH_ADDRESSES[chainId]!, amount };
   },
-
-  buildCall(params: WethWrapParams, executorAddress: `0x${string}`): CallParams {
-    const data = encodeFunctionData({
-      abi: WETH_DEPOSIT_ABI,
-      functionName: 'deposit',
-    });
-
-    return {
-      to: params.weth,
-      data,
-      value: params.amount,
-      from: executorAddress,
-    };
-  },
-
-  buildSimulation(params: WethWrapParams): SimulationParams {
-    // Convert wei to ether string for KeeperHub
-    const valueEth = (Number(params.amount) / 1e18).toFixed(18).replace(/0+$/, '').replace(/\.$/, '');
-    return {
-      contractAddress: params.weth,
-      functionName: 'deposit',
-      abi: JSON.stringify(WETH_DEPOSIT_ABI),
-      value: valueEth,
-    };
-  },
-
-  canonicalIntent(params: WethWrapParams, chainId: number, deadlineBucket: string): CanonicalFields {
-    const canonical = [
-      `weth.wrap@${meta.version}`,
-      chainId.toString(),
-      params.weth,
-      'deposit',
-      '', // no target recipient; wraps to msg.sender
-      params.amount.toString(),
-      params.amount.toString(), // value == amount for deposit
-      deadlineBucket,
-    ].join('|');
-
-    return {
-      fields: ['adapterVersion', 'chainId', 'weth', 'functionSelector', 'recipient', 'amount', 'valueWei', 'deadlineBucket'],
-      canonical,
-    };
-  },
-
-  verifyPostconditions(params: WethWrapParams, receipt: PostconditionReceipt): PostconditionCheck[] {
-    const checks: PostconditionCheck[] = [];
-
-    // WETH emits a Deposit event: Deposit(address indexed dst, uint wad)
-    const depositLog = receipt.logs.find(
-      (log) =>
-        log.eventName === 'Deposit' &&
-        log.address.toLowerCase() === params.weth.toLowerCase(),
-    );
-
-    checks.push({
-      passed: !!depositLog,
-      check: 'Deposit event emitted by WETH contract',
-      detail: depositLog
-        ? `Deposit wad: ${depositLog.args['wad']}`
-        : 'No Deposit event found',
-    });
-
-    if (depositLog) {
-      const wad = BigInt(depositLog.args['wad'] as string | bigint);
-      checks.push({
-        passed: wad === params.amount,
-        check: 'Deposited amount matches requested amount',
-        detail: `Expected ${params.amount}, got ${wad}`,
-      });
-    }
-
-    return checks;
-  },
-
-  describe(params: WethWrapParams): string {
-    return `WETH wrap: ${params.amount} wei → ${params.weth}`;
-  },
+  buildCall(params, executorAddress): CallParams { return { to: params.weth, data: encodeFunctionData({ abi: ABI, functionName: 'deposit' }), value: params.amount, from: executorAddress }; },
+  buildSimulation(params): SimulationParams { return { contractAddress: params.weth, functionName: 'deposit', abi: JSON.stringify(ABI), value: weiToEtherString(params.amount) }; },
+  canonicalIntent(params, chainId, bucket): CanonicalFields { const canonical = [`weth.wrap@${meta.version}`, chainId, params.weth.toLowerCase(), 'deposit', '', params.amount, params.amount, bucket].join('|'); return { fields: ['adapterVersion','chainId','weth','functionSelector','recipient','amount','valueWei','deadlineBucket'], canonical }; },
+  verifyPostconditions(params, receipt: PostconditionReceipt): PostconditionCheck[] { const log = receipt.logs.find((l) => l.eventName === 'Deposit' && l.address.toLowerCase() === params.weth.toLowerCase() && String(l.args['dst']).toLowerCase() === receipt.executorAddress.toLowerCase()); const checks: PostconditionCheck[] = [{ passed: !!log, check: 'Deposit event emitted by pinned WETH contract', detail: log ? `Deposit wad: ${log.args['wad']}` : 'No Deposit event found' }]; if (log) checks.push({ passed: BigInt(log.args['wad'] as string | bigint) === params.amount, check: 'Deposited amount matches requested amount' }); return checks; },
+  describe: (params) => `WETH wrap: ${params.amount} wei on chain ${params.chainId}`,
 };

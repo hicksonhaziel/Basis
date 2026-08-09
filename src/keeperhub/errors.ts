@@ -61,9 +61,12 @@ export class IdempotencyConflictError extends KeeperHubError {
 }
 
 export class IdempotencyInProgressError extends KeeperHubError {
-  constructor(body: unknown) {
+  readonly originalExecutionId: string | null;
+
+  constructor(originalExecutionId: string | null, body: unknown) {
     super('Idempotency in progress: original request still running', 409, body);
     this.name = 'IdempotencyInProgressError';
+    this.originalExecutionId = originalExecutionId;
   }
 }
 

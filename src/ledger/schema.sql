@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS quotes (
   pricing_model_version TEXT NOT NULL,
   breakdown_json TEXT NOT NULL,
   simulation_json TEXT NOT NULL,
+  intent_json TEXT,
   signature TEXT NOT NULL,
   issued_at TEXT NOT NULL,
   consumed INTEGER NOT NULL DEFAULT 0,
@@ -33,9 +34,9 @@ CREATE INDEX IF NOT EXISTS idx_quotes_expires ON quotes(expires_at);
 
 CREATE TABLE IF NOT EXISTS orders (
   order_id TEXT PRIMARY KEY,
-  quote_id TEXT NOT NULL REFERENCES quotes(quote_id),
-  state TEXT NOT NULL DEFAULT 'PAID',
-  payment_tx_hash TEXT,
+  quote_id TEXT NOT NULL UNIQUE REFERENCES quotes(quote_id),
+  state TEXT NOT NULL DEFAULT 'AUTHENTICATED_INGRESS',
+  authority_kind TEXT NOT NULL,
   payment_amount_usd TEXT NOT NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
@@ -44,15 +45,32 @@ CREATE TABLE IF NOT EXISTS orders (
 CREATE INDEX IF NOT EXISTS idx_orders_quote ON orders(quote_id);
 CREATE INDEX IF NOT EXISTS idx_orders_state ON orders(state);
 
+-- ─── State transition history ──────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS order_transitions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  order_id TEXT NOT NULL REFERENCES orders(order_id),
+  from_state TEXT NOT NULL,
+  to_state TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  transitioned_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_order_transitions_order ON order_transitions(order_id, id);
+
 -- ─── Executions ────────────────────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS executions (
   execution_id TEXT PRIMARY KEY,
-  order_id TEXT NOT NULL REFERENCES orders(order_id),
+  order_id TEXT NOT NULL UNIQUE REFERENCES orders(order_id),
   keeperhub_execution_id TEXT,
-  idempotency_key TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL UNIQUE,
   chain_id INTEGER NOT NULL,
-  state TEXT NOT NULL DEFAULT 'EXECUTING',
+  state TEXT NOT NULL DEFAULT 'AUTHENTICATED_INGRESS',
+  canonical_intent_json TEXT NOT NULL,
+  outbound_request_json TEXT NOT NULL,
+  submission_state TEXT NOT NULL DEFAULT 'NOT_SUBMITTED',
+  idempotent_replay INTEGER NOT NULL DEFAULT 0,
   transaction_hash TEXT,
   gas_used TEXT,
   gas_used_wei TEXT,
@@ -73,12 +91,15 @@ CREATE TABLE IF NOT EXISTS receipts (
   execution_id TEXT NOT NULL REFERENCES executions(execution_id),
   transaction_hash TEXT NOT NULL,
   chain_id INTEGER NOT NULL,
-  verified INTEGER NOT NULL DEFAULT 0,
+  keeperhub_verified INTEGER NOT NULL,
+  independent_verified INTEGER NOT NULL,
   receipt_status TEXT NOT NULL,
   block_number INTEGER,
   gas_used TEXT,
-  verified_at TEXT,
-  postconditions_json TEXT
+  verified_at TEXT NOT NULL,
+  verification_source TEXT NOT NULL,
+  decoded_logs_json TEXT NOT NULL,
+  postconditions_json TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_receipts_execution ON receipts(execution_id);

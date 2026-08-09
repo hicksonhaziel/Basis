@@ -40,6 +40,8 @@ export function registerOrderRoutes(
       if (!quoteRow) return reply.status(400).send({ error: `Quote not found: ${quoteId}` });
 
       const quote: Quote = {
+        canonicalizationFormat: quoteRow.canonicalization_format as Quote['canonicalizationFormat'],
+        signatureFormat: quoteRow.signature_format as Quote['signatureFormat'],
         quoteId: quoteRow.quote_id as string,
         jobHash: quoteRow.job_hash as string,
         jobType: quoteRow.job_type as string,
@@ -53,6 +55,7 @@ export function registerOrderRoutes(
         breakdown: JSON.parse(quoteRow.breakdown_json as string),
         simulation: JSON.parse(quoteRow.simulation_json as string),
         intent: JSON.parse(quoteRow.intent_json as string),
+        oracleEvidence: JSON.parse(quoteRow.oracle_evidence_json as string),
         signature: quoteRow.signature as string,
         issuedAt: quoteRow.issued_at as string,
       };

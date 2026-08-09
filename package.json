@@ -15,7 +15,6 @@
     "test:integration": "node --test --experimental-strip-types 'test/integration/**/*.test.ts'",
     "start": "node --experimental-strip-types src/api/server.ts",
     "quote": "node --experimental-strip-types src/cli/quote.ts",
-    "execute": "node --experimental-strip-types src/cli/execute.ts",
     "verify:book": "node --experimental-strip-types src/cli/verify-book.ts",
     "backtest:replay": "node --experimental-strip-types backtest/replay.ts",
     "reconcile:report": "node --experimental-strip-types operator/reconcile-report.ts",

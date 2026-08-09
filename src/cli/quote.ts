@@ -118,8 +118,7 @@ async function main(): Promise<void> {
     console.log(`  Protected gas price: ${quote.breakdown.protectedGasPriceWei} wei`);
     console.log(`  ETH/USD:             $${quote.breakdown.nativeAssetUsd}`);
     console.log(`  Market exec cost:    $${quote.breakdown.marketExecutionCostUsd}`);
-    console.log(`  Risk cost:           $${quote.breakdown.riskCostUsd}`);
-    console.log(`  Private routing:     $${quote.breakdown.privateRoutingFeeUsd}`);
+    console.log(`  Marketplace fee:     $${quote.breakdown.marketplaceFeeUsd} (${quote.breakdown.marketplaceFeeBps} bps)`);
     console.log(`  Fixed overhead:      $${quote.breakdown.fixedOverheadUsd}`);
     console.log(`  Target margin:       $${quote.breakdown.targetMarginUsd}`);
     console.log(`  Raw price:           $${quote.breakdown.rawPriceUsd}`);

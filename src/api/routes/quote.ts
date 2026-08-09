@@ -17,7 +17,6 @@ const QuoteRequestBody = Type.Object({
     Type.Literal('1h'),
     Type.Literal('best-effort'),
   ]),
-  privateRouting: Type.Optional(Type.Boolean()),
 });
 
 export function registerQuoteRoutes(
@@ -31,12 +30,11 @@ export function registerQuoteRoutes(
     },
   }, async (request, reply) => {
     try {
-      const { jobType, params, chainId, deadlineTier, privateRouting } = request.body as {
+      const { jobType, params, chainId, deadlineTier } = request.body as {
         jobType: string;
         params: unknown;
         chainId: number;
         deadlineTier: 'next-block' | '5m' | '1h' | 'best-effort';
-        privateRouting?: boolean;
       };
 
       const quote = await executor.requestQuote({
@@ -44,7 +42,6 @@ export function registerQuoteRoutes(
         params,
         chainId,
         deadlineTier,
-        privateRouting,
       });
 
       return reply.status(200).send(quote);

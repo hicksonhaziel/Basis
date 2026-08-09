@@ -21,6 +21,9 @@ CREATE TABLE IF NOT EXISTS quotes (
   breakdown_json TEXT NOT NULL,
   simulation_json TEXT NOT NULL,
   intent_json TEXT,
+  oracle_evidence_json TEXT NOT NULL,
+  canonicalization_format TEXT NOT NULL,
+  signature_format TEXT NOT NULL,
   signature TEXT NOT NULL,
   issued_at TEXT NOT NULL,
   consumed INTEGER NOT NULL DEFAULT 0,
@@ -158,6 +161,8 @@ CREATE TABLE IF NOT EXISTS audit_events (
   type TEXT NOT NULL,
   entity_id TEXT NOT NULL,
   payload_json TEXT NOT NULL,
+  canonicalization_format TEXT NOT NULL DEFAULT 'basis-canonical-json:v1',
+  hash_format TEXT NOT NULL DEFAULT 'sha256:v2',
   prev_hash TEXT NOT NULL,
   hash TEXT NOT NULL
 );

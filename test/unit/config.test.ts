@@ -38,13 +38,12 @@ describe('config/policy', () => {
     assert.equal(price.toString(), '0.05');
   });
 
-  it('selectPaymentTier uses highest tier if price exceeds all', () => {
-    const { tier } = selectPaymentTier(new Decimal('999'));
-    assert.equal(tier, 'basis-order-t4');
+  it('selectPaymentTier rejects prices above every tier', () => {
+    assert.throws(() => selectPaymentTier(new Decimal('999')), /exceeds maximum payment tier/);
   });
 
   it('pricing model version is set', () => {
-    assert.equal(PRICING_MODEL_VERSION, 'basis-v1');
+    assert.equal(PRICING_MODEL_VERSION, 'basis-v2');
   });
 });
 

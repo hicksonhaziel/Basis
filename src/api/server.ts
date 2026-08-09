@@ -47,6 +47,12 @@ async function main(): Promise<void> {
     ledger,
     signingKey: env.basisSigningKey,
     rpcUrls: env.rpcUrls,
+    environment: env.environment,
+    oracleMaxStalenessSeconds: env.oracleMaxStalenessSeconds,
+    oracleMaxDivergenceBps: env.oracleMaxDivergenceBps,
+    oracleReference: env.oracleReference,
+    allowTestFxFallback: env.allowTestFxFallback,
+    testFxFallbackUsd: env.testFxFallbackUsd,
   });
 
   const reconciler = new ReconciliationWorker(

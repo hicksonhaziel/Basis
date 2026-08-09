@@ -9,22 +9,35 @@
  * - A signature (proving Basis issued it)
  *
  * Quote properties:
- * - Signed by Basis's signing key (HMAC-SHA256 for speed; could upgrade to Ed25519)
+ * - Signed with versioned HMAC-SHA-256
  * - Bound to a specific job hash and model version
  * - Expires after the tier's quote validity window
  * - Cannot be replayed (quoteId is unique, consumed flag is tracked)
  * - Full breakdown is included for transparency
  */
 
-import { createHmac, randomUUID } from 'node:crypto';
+import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { Decimal } from 'decimal.js';
 import type { QuoteBreakdown } from './price.ts';
 import type { DeadlineTier } from '../config/policy.ts';
-import { stableJson, type CanonicalExecutionIntent } from '../executor/intent.ts';
+import type { CanonicalExecutionIntent } from '../executor/intent.ts';
+import { canonicalJson, CANONICAL_JSON_FORMAT } from '../integrity/canonical.ts';
+
+export const QUOTE_SIGNATURE_FORMAT = 'hmac-sha256:v2' as const;
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
+export interface OracleEvidence {
+  source: 'chainlink' | 'explicit-non-production-fallback';
+  observedAt: string;
+  feedUpdatedAt?: string;
+  referencePriceUsd?: string;
+  divergenceBps?: string;
+}
+
 export interface Quote {
+  canonicalizationFormat: typeof CANONICAL_JSON_FORMAT;
+  signatureFormat: typeof QUOTE_SIGNATURE_FORMAT;
   /** Unique quote identifier */
   quoteId: string;
   /** Canonical job hash (SHA-256 of the adapter's canonical intent) */
@@ -51,7 +64,9 @@ export interface Quote {
   simulation: SimulationSummary;
   /** Exact canonical call and policy-bound adapter data. */
   intent: CanonicalExecutionIntent;
-  /** HMAC signature over the quote payload */
+  /** Signed price-source provenance and validation evidence. */
+  oracleEvidence: OracleEvidence;
+  /** HMAC-SHA-256 MAC over the versioned canonical payload */
   signature: string;
   /** When this quote was issued (ISO timestamp) */
   issuedAt: string;
@@ -64,6 +79,8 @@ export interface QuoteBreakdownSerialized {
   marketExecutionCostUsd: string;
   riskCostUsd: string;
   privateRoutingFeeUsd: string;
+  marketplaceFeeUsd: string;
+  marketplaceFeeBps: number;
   fixedOverheadUsd: string;
   targetMarginUsd: string;
   rawPriceUsd: string;
@@ -98,6 +115,7 @@ export interface QuoteParams {
   breakdown: QuoteBreakdown;
   simulation: SimulationSummary;
   intent: CanonicalExecutionIntent;
+  oracleEvidence: OracleEvidence;
 }
 
 // ─── Quote Generation ────────────────────────────────────────────────────────
@@ -119,6 +137,8 @@ export function generateQuote(params: QuoteParams, signingKey: string): Quote {
     marketExecutionCostUsd: params.breakdown.marketExecutionCostUsd.toFixed(8),
     riskCostUsd: params.breakdown.riskCostUsd.toFixed(8),
     privateRoutingFeeUsd: params.breakdown.privateRoutingFeeUsd.toFixed(8),
+    marketplaceFeeUsd: params.breakdown.marketplaceFeeUsd.toFixed(8),
+    marketplaceFeeBps: params.breakdown.marketplaceFeeBps,
     fixedOverheadUsd: params.breakdown.fixedOverheadUsd.toFixed(8),
     targetMarginUsd: params.breakdown.targetMarginUsd.toFixed(8),
     rawPriceUsd: params.breakdown.rawPriceUsd.toFixed(8),
@@ -126,6 +146,8 @@ export function generateQuote(params: QuoteParams, signingKey: string): Quote {
   };
 
   const quote: Omit<Quote, 'signature'> = {
+    canonicalizationFormat: CANONICAL_JSON_FORMAT,
+    signatureFormat: QUOTE_SIGNATURE_FORMAT,
     quoteId,
     jobHash: params.jobHash,
     jobType: params.jobType,
@@ -139,6 +161,7 @@ export function generateQuote(params: QuoteParams, signingKey: string): Quote {
     breakdown,
     simulation: params.simulation,
     intent: params.intent,
+    oracleEvidence: params.oracleEvidence,
     issuedAt,
   };
 
@@ -152,9 +175,12 @@ export function generateQuote(params: QuoteParams, signingKey: string): Quote {
  * Returns true if the signature matches, false otherwise.
  */
 export function verifyQuoteSignature(quote: Quote, signingKey: string): boolean {
+  if (quote.canonicalizationFormat !== CANONICAL_JSON_FORMAT || quote.signatureFormat !== QUOTE_SIGNATURE_FORMAT) return false;
   const { signature, ...payload } = quote;
-  const expectedSignature = signQuote(payload, signingKey);
-  return signature === expectedSignature;
+  if (!/^[0-9a-f]{64}$/.test(signature)) return false;
+  const expected = Buffer.from(signQuote(payload, signingKey), 'hex');
+  const actual = Buffer.from(signature, 'hex');
+  return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
 
 /**
@@ -193,7 +219,7 @@ export function validateQuoteForOrder(
  * The payload is JSON-serialized with sorted keys for determinism.
  */
 function signQuote(payload: Omit<Quote, 'signature'>, signingKey: string): string {
-  const canonical = stableJson(payload);
+  const canonical = canonicalJson(payload);
   const hmac = createHmac('sha256', signingKey);
   hmac.update(canonical, 'utf8');
   return hmac.digest('hex');

@@ -2,6 +2,7 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { unlinkSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { Ledger, verifyAuditChain, computeEventHash } from '../../src/ledger/database.ts';
+import { verifyAuditEvents } from '../../dashboard/audit-chain.mjs';
 
 let ledger: Ledger;
 let dbPath: string;
@@ -72,22 +73,63 @@ describe('ledger/database', () => {
     assert.equal(result.brokenAt, undefined);
   });
 
-  it('verifyAuditChain fails for tampered event (modify payload)', () => {
-    ledger.appendEvent('QUOTE_ISSUED', 'q_1', { price: '0.05' });
+  it('rejects nested payload tampering that the legacy serializer failed to bind', () => {
+    ledger.appendEvent('QUOTE_ISSUED', 'q_1', { quote: { pricing: { marketplaceFeeBps: 3000 } } });
     ledger.appendEvent('ORDER_CREATED', 'o_1', { quoteId: 'q_1' });
 
-    // Tamper with the JSONL file — modify the entityId which IS hashed
     const content = readFileSync(jsonlPath, 'utf-8');
     const lines = content.trim().split('\n');
     const event = JSON.parse(lines[0]!);
-    event.entityId = 'q_TAMPERED'; // Tamper with a hashed field!
+    const legacy = (value: unknown) => JSON.stringify(value, ['entityId','payload','prevHash','seq','timestamp','type']);
+    const before = legacy({ seq: event.seq, timestamp: event.timestamp, type: event.type, entityId: event.entityId, payload: event.payload, prevHash: event.prevHash });
+    event.payload.quote.pricing.marketplaceFeeBps = 0;
+    const after = legacy({ seq: event.seq, timestamp: event.timestamp, type: event.type, entityId: event.entityId, payload: event.payload, prevHash: event.prevHash });
+    assert.equal(before, after, 'legacy replacer omitted nested payload keys');
     lines[0] = JSON.stringify(event);
     writeFileSync(jsonlPath, lines.join('\n') + '\n');
 
     const result = verifyAuditChain(jsonlPath);
     assert.equal(result.valid, false);
     assert.equal(result.brokenAt, 1);
-    assert.ok(result.error!.includes('Hash mismatch'));
+    assert.match(result.error!, /Hash mismatch/);
+  });
+
+  it('rejects an audit sequence gap', () => {
+    ledger.appendEvent('QUOTE_ISSUED', 'q_1', { nested: { value: 1 } });
+    ledger.appendEvent('ORDER_CREATED', 'o_1', { quoteId: 'q_1' });
+    const lines = readFileSync(jsonlPath, 'utf8').trim().split('\n');
+    const second = JSON.parse(lines[1]!);
+    second.seq = 3;
+    lines[1] = JSON.stringify(second);
+    writeFileSync(jsonlPath, lines.join('\n') + '\n');
+    const result = verifyAuditChain(jsonlPath);
+    assert.equal(result.valid, false);
+    assert.equal(result.brokenAt, 2);
+    assert.match(result.error!, /Expected seq 2/);
+  });
+
+  it('allocates collision-free linked sequences across concurrent ledger writers', () => {
+    const second = new Ledger(dbPath, jsonlPath);
+    try {
+      const firstEvent = ledger.appendEvent('QUOTE_ISSUED', 'q_1', { writer: 1 });
+      const secondEvent = second.appendEvent('ORDER_CREATED', 'o_1', { writer: 2 });
+      const thirdEvent = ledger.appendEvent('EXECUTION_STARTED', 'x_1', { writer: 1 });
+      assert.deepEqual([firstEvent.seq, secondEvent.seq, thirdEvent.seq], [1, 2, 3]);
+      assert.equal(secondEvent.prevHash, firstEvent.hash);
+      assert.equal(thirdEvent.prevHash, secondEvent.hash);
+      assert.equal(verifyAuditChain(jsonlPath).valid, true);
+    } finally { second.close(); }
+  });
+
+  it('browser verifier recomputes the same hashes and rejects nested tampering', async () => {
+    ledger.appendEvent('QUOTE_ISSUED', 'q_1', { nested: { price: '0.05' } });
+    const events = readFileSync(jsonlPath, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+    assert.deepEqual(await verifyAuditEvents(events), { valid: true });
+    events[0].payload.nested.price = '999';
+    const result = await verifyAuditEvents(events);
+    assert.equal(result.valid, false);
+    assert.equal(result.brokenAt, 1);
+    assert.match(result.error!, /hash mismatch/);
   });
 
   it('quote consumed flag works', () => {
@@ -107,6 +149,7 @@ describe('ledger/database', () => {
       simulation: { success: true },
       signature: 'sig123',
       issuedAt: '2026-08-08T12:00:00.000Z',
+
     });
 
     assert.equal(ledger.isQuoteConsumed('q_test1'), false);

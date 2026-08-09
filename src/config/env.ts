@@ -15,6 +15,11 @@ export interface BasisEnv {
   orderIngressSecret: string;
   erc20TransferAllowlist: Erc20TransferAllowance[];
   environment: 'local' | 'testnet' | 'production';
+  oracleMaxStalenessSeconds: number;
+  oracleMaxDivergenceBps: number;
+  oracleReference?: { priceUsd: string; updatedAt: number };
+  allowTestFxFallback: boolean;
+  testFxFallbackUsd?: string;
 }
 
 const ADDRESS = /^0x[a-fA-F0-9]{40}$/;
@@ -62,6 +67,28 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): BasisEnv {
   if (orderIngressSecret.length < 32) throw new Error('ORDER_INGRESS_SECRET must be at least 32 characters');
   if (orderIngressSecret === basisSigningKey) throw new Error('ORDER_INGRESS_SECRET must differ from BASIS_SIGNING_KEY');
 
+  const positiveInteger = (key: string, fallback: string): number => {
+    const value = Number(optional(key, fallback));
+    if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`${key} must be a positive integer`);
+    return value;
+  };
+  const oracleMaxStalenessSeconds = positiveInteger('ORACLE_MAX_STALENESS_SECONDS', '3600');
+  const oracleMaxDivergenceBps = positiveInteger('ORACLE_MAX_DIVERGENCE_BPS', '500');
+  const referencePrice = source['ORACLE_REFERENCE_ETH_USD'];
+  const referenceUpdatedAt = source['ORACLE_REFERENCE_UPDATED_AT'];
+  let oracleReference: BasisEnv['oracleReference'];
+  if (referencePrice || referenceUpdatedAt) {
+    if (!referencePrice || !referenceUpdatedAt || !/^\d+(\.\d+)?$/.test(referencePrice)) throw new Error('Oracle reference price and timestamp must both be valid');
+    const updatedAt = Number(referenceUpdatedAt);
+    if (!Number.isSafeInteger(updatedAt) || updatedAt <= 0) throw new Error('ORACLE_REFERENCE_UPDATED_AT must be a unix timestamp');
+    oracleReference = { priceUsd: referencePrice, updatedAt };
+  }
+  if (environment === 'production' && !oracleReference) throw new Error('Production requires an independent oracle reference price and timestamp');
+  const allowTestFxFallback = source['ALLOW_TEST_FX_FALLBACK'] === 'true';
+  if (environment === 'production' && allowTestFxFallback) throw new Error('Production cannot enable test FX fallback');
+  const testFxFallbackUsd = source['TEST_FX_FALLBACK_USD'];
+  if (allowTestFxFallback && (!testFxFallbackUsd || !/^\d+(\.\d+)?$/.test(testFxFallbackUsd))) throw new Error('Explicit test FX fallback requires TEST_FX_FALLBACK_USD');
+
   return {
     keeperHubApiKey: required('KEEPERHUB_API_KEY'),
     keeperHubBaseUrl: optional('KEEPERHUB_BASE_URL', 'https://api.keeperhub.com'),
@@ -75,5 +102,10 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): BasisEnv {
     orderIngressSecret,
     erc20TransferAllowlist: parseErc20Allowlist(source['ERC20_TRANSFER_ALLOWLIST']),
     environment: environment as BasisEnv['environment'],
+    oracleMaxStalenessSeconds,
+    oracleMaxDivergenceBps,
+    oracleReference,
+    allowTestFxFallback,
+    testFxFallbackUsd,
   };
 }

@@ -46,11 +46,12 @@ function makeQuote(ledger: Ledger, params: { failPostcondition?: boolean } = {})
   const deadline = new Date(now + 300_000);
   const quote = generateQuote({
     jobHash: `${Math.random()}`.padEnd(64, '0').slice(0, 64), jobType: adapter.meta.jobType, chainId: 8453, deadlineTier: '5m', deadlineAt: deadline, expiresAt: new Date(now + 60_000), gasEstimate: 50_000n, nativeAssetUsd: new Decimal('3000'),
-    breakdown: { protectedGasPriceWei: 1n, marketExecutionCostUsd: new Decimal('0.01'), riskCostUsd: new Decimal('0'), privateRoutingFeeUsd: new Decimal('0'), fixedOverheadUsd: new Decimal('0'), targetMarginUsd: new Decimal('0'), rawPriceUsd: new Decimal('0.01'), tierRoundingUsd: new Decimal('0'), payableTierUsd: new Decimal('0.01'), paymentTier: 'basis-order-t1', pricingModelVersion: 'basis-v1' },
+    breakdown: { protectedGasPriceWei: 1n, marketExecutionCostUsd: new Decimal('0.01'), riskCostUsd: new Decimal('0'), privateRoutingFeeUsd: new Decimal('0'), marketplaceFeeUsd: new Decimal('0.004285714285714286'), marketplaceFeeBps: 3000, fixedOverheadUsd: new Decimal('0'), targetMarginUsd: new Decimal('0'), rawPriceUsd: new Decimal('0.014285714285714286'), tierRoundingUsd: new Decimal('0.035714285714285714'), payableTierUsd: new Decimal('0.05'), paymentTier: 'basis-order-t2', pricingModelVersion: 'basis-v2' },
     simulation: { success: true, wouldRevert: false, from: EXECUTOR, to: TARGET, gasEstimate: '50000', functionName: 'execute', functionArgs: '["7"]', abi: '[]' },
     intent: { adapterName: adapter.meta.jobType, adapterVersion: adapter.meta.version, chainId: 8453, target: TARGET, functionName: 'execute', functionArgs: '["7"]', abi: '[]', calldata: '0x1234', nativeValueWei: '0', executorAddress: EXECUTOR, deadlineAt: deadline.toISOString(), validatedParams: params },
+    oracleEvidence: { source: 'chainlink', observedAt: new Date().toISOString(), feedUpdatedAt: new Date().toISOString() },
   }, KEY);
-  ledger.insertQuote({ quoteId: quote.quoteId, jobHash: quote.jobHash, jobType: quote.jobType, chainId: quote.chainId, deadlineTier: quote.deadlineTier, deadlineAt: quote.deadlineAt, expiresAt: quote.expiresAt, priceUsd: quote.priceUsd, paymentTier: quote.paymentTier, pricingModelVersion: quote.pricingModelVersion, breakdown: quote.breakdown as unknown as Record<string, unknown>, simulation: quote.simulation as unknown as Record<string, unknown>, intent: quote.intent as unknown as Record<string, unknown>, signature: quote.signature, issuedAt: quote.issuedAt });
+  ledger.insertQuote({ quoteId: quote.quoteId, jobHash: quote.jobHash, jobType: quote.jobType, chainId: quote.chainId, deadlineTier: quote.deadlineTier, deadlineAt: quote.deadlineAt, expiresAt: quote.expiresAt, priceUsd: quote.priceUsd, paymentTier: quote.paymentTier, pricingModelVersion: quote.pricingModelVersion, breakdown: quote.breakdown as unknown as Record<string, unknown>, simulation: quote.simulation as unknown as Record<string, unknown>, intent: quote.intent as unknown as Record<string, unknown>, oracleEvidence: quote.oracleEvidence as unknown as Record<string, unknown>, canonicalizationFormat: quote.canonicalizationFormat, signatureFormat: quote.signatureFormat, signature: quote.signature, issuedAt: quote.issuedAt });
   return quote;
 }
 
@@ -81,6 +82,24 @@ async function executeScenario(options: { sim?: () => Promise<SimulationSuccess>
   return { result, ledger, quote, sends: () => sends };
 }
 
+describe('production quote oracle policy', () => {
+  it('fails closed on Chainlink RPC failure even if fallback values are configured', async () => {
+    const ledger = makeLedger();
+    const keeper = { getOrgWalletAddress: async () => EXECUTOR, simulate: async () => simulation() };
+    const failingRpc = {
+      chain: { id: 8453 },
+      getFeeHistory: async () => ({ oldestBlock: 1n, baseFeePerGas: [1n, 1n], reward: [[1n, 1n, 1n, 1n, 1n]] }),
+      readContract: async () => { throw new Error('oracle RPC unavailable'); },
+    } as unknown as PublicClient;
+    const executor = new BasisExecutor({
+      keeperHubClient: keeper as never, ledger, signingKey: KEY, rpcUrls: { 8453: 'test' }, rpcClientFactory: () => failingRpc,
+      environment: 'production', oracleReference: { priceUsd: '2500', updatedAt: Math.floor(Date.now() / 1000) },
+      allowTestFxFallback: true, testFxFallbackUsd: '3100',
+    });
+    await assert.rejects(executor.requestQuote({ jobType: adapter.meta.jobType, params: {}, chainId: 8453, deadlineTier: '5m' }), /oracle RPC unavailable/);
+  });
+});
+
 describe('deterministic execution lifecycle', () => {
   it('successfully re-simulates, executes, independently verifies, and succeeds', async () => {
     const { result, ledger } = await executeScenario();
@@ -98,6 +117,7 @@ describe('deterministic execution lifecycle', () => {
     assert.equal(result.status, 'REFUND_PENDING'); assert.match(result.error!, /target mismatch/); assert.equal(sends(), 0);
   });
   it('rejects re-simulation value mismatch', async () => {
+
     const { result, sends } = await executeScenario({ sim: async () => simulation({ value: '1' }) });
     assert.equal(result.status, 'REFUND_PENDING'); assert.match(result.error!, /value mismatch/); assert.equal(sends(), 0);
   });

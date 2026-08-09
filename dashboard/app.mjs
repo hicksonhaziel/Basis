@@ -1,3 +1,5 @@
+import { verifyAuditEvents } from './audit-chain.mjs';
+
 /**
  * Basis Dashboard — app.mjs
  * Loads evidence data (JSONL audit chain) and populates the open book.
@@ -74,23 +76,19 @@ function buildTape(events) {
 }
 
 // Verify the hash chain integrity
-function verifyChain() {
+async function verifyChain() {
   const el = document.getElementById('verify-result');
   if (!window._events || window._events.length === 0) {
     el.innerHTML = '<span class="yellow">No events loaded</span>';
     return;
   }
 
-  let prevHash = '0'.repeat(64);
-  for (let i = 0; i < window._events.length; i++) {
-    const event = window._events[i];
-    if (event.prevHash !== prevHash) {
-      el.innerHTML = `<span class="red">✗ Chain broken at seq ${event.seq}: prevHash mismatch</span>`;
-      return;
-    }
-    prevHash = event.hash;
+  const result = await verifyAuditEvents(window._events);
+  if (!result.valid) {
+    el.innerHTML = `<span class="red">✗ Chain broken at seq ${result.brokenAt}: ${result.error}</span>`;
+    return;
   }
-  el.innerHTML = `<span class="green">✓ Chain valid — ${window._events.length} events, unbroken</span>`;
+  el.innerHTML = `<span class="green">✓ Chain valid — ${window._events.length} events, hashes recomputed</span>`;
 }
 window.verifyChain = verifyChain;
 

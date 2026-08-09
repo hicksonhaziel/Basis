@@ -12,9 +12,8 @@
 import { createPublicClient, http } from 'viem';
 import { base } from 'viem/chains';
 import { Decimal } from 'decimal.js';
-import { priceQuote } from '../src/quoter/price.ts';
-import { buildFeeSamples, feePercentile } from '../src/quoter/fee-history.ts';
-import { DEADLINE_TIERS, RETRY_PREMIUM_BPS, TARGET_MARGIN_BPS, FIXED_OVERHEAD_USD, PRICING_MODEL_VERSION } from '../src/config/policy.ts';
+import { feePercentile } from '../src/quoter/fee-history.ts';
+import { DEADLINE_TIERS } from '../src/config/policy.ts';
 import { writeFileSync } from 'fs';
 
 const RPC_URL = process.env.RPC_URL_BASE || 'https://mainnet.base.org';

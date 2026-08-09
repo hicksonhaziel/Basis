@@ -93,10 +93,17 @@ describe('production configuration', () => {
     assert.throws(() => loadEnv({ BASIS_ENV: 'production', KEEPERHUB_API_KEY: 'kh_prod', BASIS_SIGNING_KEY: 's'.repeat(32) }), /ORDER_INGRESS_SECRET/);
   });
 
+  it('requires an independent oracle reference and forbids test fallback in production', () => {
+    const base = { BASIS_ENV: 'production', KEEPERHUB_API_KEY: 'kh_prod', BASIS_SIGNING_KEY: 's'.repeat(32), ORDER_INGRESS_SECRET: 'i'.repeat(32) };
+    assert.throws(() => loadEnv(base), /independent oracle reference/);
+    assert.throws(() => loadEnv({ ...base, ORACLE_REFERENCE_ETH_USD: '2500', ORACLE_REFERENCE_UPDATED_AT: String(Math.floor(Date.now() / 1000)), ALLOW_TEST_FX_FALLBACK: 'true', TEST_FX_FALLBACK_USD: '2500' }), /cannot enable test FX fallback/);
+  });
+
   it('loads deterministic runtime configuration without any LLM provider', () => {
     const env = loadEnv({
       BASIS_ENV: 'production', KEEPERHUB_API_KEY: 'kh_prod',
       BASIS_SIGNING_KEY: 's'.repeat(32), ORDER_INGRESS_SECRET: 'i'.repeat(32),
+      ORACLE_REFERENCE_ETH_USD: '2500', ORACLE_REFERENCE_UPDATED_AT: String(Math.floor(Date.now() / 1000)),
     });
     assert.equal(env.environment, 'production');
     assert.equal(Object.keys(env).some((key) => /llm|openai|anthropic/i.test(key)), false);

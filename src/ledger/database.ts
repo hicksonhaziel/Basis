@@ -1,14 +1,16 @@
 /** SQLite source of truth plus append-only hash-chained audit evidence. */
 import Database from 'better-sqlite3';
 import { createHash } from 'node:crypto';
-import { readFileSync, appendFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync, unlinkSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
+import { canonicalJson, CANONICAL_JSON_FORMAT } from '../integrity/canonical.ts';
 import { assertOrderState, transition, type OrderState } from '../executor/state-machine.ts';
 import type { PersistedExecutionIntent } from '../executor/intent.ts';
 import type { ExecuteContractCallRequest } from '../keeperhub/client.ts';
 import type { DecodedLog, PostconditionCheck } from '../adapters/adapter.ts';
 
-export interface AuditEvent { seq: number; timestamp: string; type: string; entityId: string; payload: Record<string, unknown>; prevHash: string; hash: string; }
+export const AUDIT_HASH_FORMAT = 'sha256:v2' as const;
+export interface AuditEvent { seq: number; timestamp: string; type: string; entityId: string; payload: Record<string, unknown>; canonicalizationFormat: typeof CANONICAL_JSON_FORMAT; hashFormat: typeof AUDIT_HASH_FORMAT; prevHash: string; hash: string; }
 export type EventType = 'QUOTE_ISSUED' | 'ORDER_CREATED' | 'STATE_TRANSITION' | 'EXECUTION_STARTED' | 'EXECUTION_SUBMISSION_PERSISTED' | 'EXECUTION_SUBMITTED' | 'EXECUTION_VERIFIED' | 'EXECUTION_FAILED' | 'EXECUTION_UNCERTAIN' | 'REFUND_ISSUED' | 'REFUND_COMPLETED' | 'FEE_SAMPLE_COLLECTED' | 'FX_SAMPLE_COLLECTED';
 
 export interface AdmissionInput {
@@ -53,6 +55,11 @@ export class Ledger {
       if (!columns.some((item) => item.name === column)) this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
     };
     add('quotes', 'intent_json', 'TEXT');
+    add('quotes', 'oracle_evidence_json', "TEXT NOT NULL DEFAULT '{}'");
+    add('quotes', 'canonicalization_format', "TEXT NOT NULL DEFAULT 'basis-canonical-json:v1'");
+    add('quotes', 'signature_format', "TEXT NOT NULL DEFAULT 'hmac-sha256:v2'");
+    add('audit_events', 'canonicalization_format', "TEXT NOT NULL DEFAULT 'basis-canonical-json:v1'");
+    add('audit_events', 'hash_format', "TEXT NOT NULL DEFAULT 'sha256:v2'");
     add('orders', 'authority_kind', "TEXT NOT NULL DEFAULT 'LEGACY_UNKNOWN'");
     add('executions', 'canonical_intent_json', "TEXT NOT NULL DEFAULT '{}'");
     add('executions', 'outbound_request_json', "TEXT NOT NULL DEFAULT '{}'");
@@ -67,30 +74,47 @@ export class Ledger {
     this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_executions_idempotency_unique ON executions(idempotency_key)');
   }
 
-  private insertAuditRow(type: EventType, entityId: string, payload: Record<string, unknown>, prevHash: string): AuditEvent {
+  private insertAuditRow(type: EventType, entityId: string, payload: Record<string, unknown>): AuditEvent {
     const timestamp = new Date().toISOString();
-    const { next_seq: seq } = this.db.prepare('SELECT COALESCE(MAX(seq), 0) + 1 AS next_seq FROM audit_events').get() as { next_seq: number };
-    const hash = computeEventHash(seq, timestamp, type, entityId, payload, prevHash);
-    this.db.prepare('INSERT INTO audit_events (seq,timestamp,type,entity_id,payload_json,prev_hash,hash) VALUES (?,?,?,?,?,?,?)').run(seq, timestamp, type, entityId, JSON.stringify(payload), prevHash, hash);
-    return { seq, timestamp, type, entityId, payload, prevHash, hash };
+    const inserted = this.db.prepare(`INSERT INTO audit_events
+      (timestamp,type,entity_id,payload_json,canonicalization_format,hash_format,prev_hash,hash)
+      VALUES (?,?,?,?,?,?,?,?)`).run(timestamp, type, entityId, JSON.stringify(payload), CANONICAL_JSON_FORMAT, AUDIT_HASH_FORMAT, '', '');
+    const seq = Number(inserted.lastInsertRowid);
+    const previous = this.db.prepare('SELECT hash FROM audit_events WHERE seq < ? ORDER BY seq DESC LIMIT 1').get(seq) as { hash: string } | undefined;
+    const prevHash = previous?.hash ?? '0'.repeat(64);
+    const hash = computeEventHash(seq, timestamp, type, entityId, payload, prevHash, CANONICAL_JSON_FORMAT, AUDIT_HASH_FORMAT);
+    this.db.prepare('UPDATE audit_events SET prev_hash=?,hash=? WHERE seq=?').run(prevHash, hash, seq);
+    return { seq, timestamp, type, entityId, payload, canonicalizationFormat: CANONICAL_JSON_FORMAT, hashFormat: AUDIT_HASH_FORMAT, prevHash, hash };
   }
 
   private commitAuditFiles(events: AuditEvent[]): void {
     if (!events.length) return;
     this.lastHash = events.at(-1)!.hash;
-    for (const event of events) appendFileSync(this.jsonlPath, `${JSON.stringify(event)}\n`);
+    this.exportAuditJsonl();
   }
 
-  private repairAuditFile(): void {
-    const rows = this.db.prepare('SELECT seq,timestamp,type,entity_id,payload_json,prev_hash,hash FROM audit_events ORDER BY seq').all() as Array<Record<string, unknown>>;
-    const expected = rows.map((row) => JSON.stringify({ seq: row.seq, timestamp: row.timestamp, type: row.type, entityId: row.entity_id, payload: JSON.parse(row.payload_json as string), prevHash: row.prev_hash, hash: row.hash })).join('\n');
-    const current = existsSync(this.jsonlPath) ? readFileSync(this.jsonlPath, 'utf8').trim() : '';
-    if (current !== expected) writeFileSync(this.jsonlPath, expected ? `${expected}\n` : '');
+  exportAuditJsonl(): void {
+    const rows = this.db.prepare(`SELECT seq,timestamp,type,entity_id,payload_json,canonicalization_format,hash_format,prev_hash,hash
+      FROM audit_events ORDER BY seq`).all() as Array<Record<string, unknown>>;
+    const content = rows.map((row) => JSON.stringify({
+      seq: row.seq, timestamp: row.timestamp, type: row.type, entityId: row.entity_id,
+      payload: JSON.parse(row.payload_json as string), canonicalizationFormat: row.canonicalization_format,
+      hashFormat: row.hash_format, prevHash: row.prev_hash, hash: row.hash,
+    })).join('\n');
+    const temporary = `${this.jsonlPath}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    try {
+      writeFileSync(temporary, content ? `${content}\n` : '', { flag: 'wx' });
+      renameSync(temporary, this.jsonlPath);
+    } finally {
+      if (existsSync(temporary)) unlinkSync(temporary);
+    }
   }
+
+  private repairAuditFile(): void { this.exportAuditJsonl(); }
 
   appendEvent(type: EventType, entityId: string, payload: Record<string, unknown>): AuditEvent {
     let event!: AuditEvent;
-    this.db.transaction(() => { event = this.insertAuditRow(type, entityId, payload, this.lastHash); })();
+    this.db.transaction(() => { event = this.insertAuditRow(type, entityId, payload); })();
     this.commitAuditFiles([event]);
     return event;
   }
@@ -101,12 +125,13 @@ export class Ledger {
   insertQuote(quote: {
     quoteId: string; jobHash: string; jobType: string; chainId: number; deadlineTier: string; deadlineAt: string; expiresAt: string;
     priceUsd: string; paymentTier: string; pricingModelVersion: string; breakdown: Record<string, unknown>; simulation: Record<string, unknown>;
-    intent?: Record<string, unknown>; signature: string; issuedAt: string;
+    intent?: Record<string, unknown>; oracleEvidence?: Record<string, unknown>; canonicalizationFormat?: string; signatureFormat?: string;
+    signature: string; issuedAt: string;
   }): void {
-    this.db.prepare(`INSERT INTO quotes (quote_id,job_hash,job_type,chain_id,deadline_tier,deadline_at,expires_at,price_usd,payment_tier,pricing_model_version,breakdown_json,simulation_json,intent_json,signature,issued_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+    this.db.prepare(`INSERT INTO quotes (quote_id,job_hash,job_type,chain_id,deadline_tier,deadline_at,expires_at,price_usd,payment_tier,pricing_model_version,breakdown_json,simulation_json,intent_json,oracle_evidence_json,canonicalization_format,signature_format,signature,issued_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
       quote.quoteId, quote.jobHash, quote.jobType, quote.chainId, quote.deadlineTier, quote.deadlineAt, quote.expiresAt, quote.priceUsd,
       quote.paymentTier, quote.pricingModelVersion, JSON.stringify(quote.breakdown), JSON.stringify(quote.simulation), quote.intent ? JSON.stringify(quote.intent) : null,
-      quote.signature, quote.issuedAt,
+      JSON.stringify(quote.oracleEvidence ?? {}), quote.canonicalizationFormat ?? CANONICAL_JSON_FORMAT, quote.signatureFormat ?? 'hmac-sha256:v2', quote.signature, quote.issuedAt,
     );
   }
 
@@ -126,8 +151,8 @@ export class Ledger {
         input.executionId, input.orderId, input.idempotencyKey, input.chainId, 'AUTHENTICATED_INGRESS', JSON.stringify(input.intent), JSON.stringify(input.outboundRequest), 'REQUEST_PERSISTED', now,
       );
       this.db.prepare('INSERT INTO order_transitions (order_id,from_state,to_state,reason,transitioned_at) VALUES (?,?,?,?,?)').run(input.orderId, 'QUOTED', 'AUTHENTICATED_INGRESS', input.authorityKind, now);
-      const created = this.insertAuditRow('ORDER_CREATED', input.orderId, { quoteId: input.quoteId, authorityKind: input.authorityKind, paid: input.authorityKind === 'VERIFIED_MARKETPLACE_PAYMENT' }, this.lastHash);
-      events.push(created, this.insertAuditRow('EXECUTION_SUBMISSION_PERSISTED', input.executionId, { idempotencyKey: input.idempotencyKey, request: input.outboundRequest }, created.hash));
+      const created = this.insertAuditRow('ORDER_CREATED', input.orderId, { quoteId: input.quoteId, authorityKind: input.authorityKind, paid: input.authorityKind === 'VERIFIED_MARKETPLACE_PAYMENT' });
+      events.push(created, this.insertAuditRow('EXECUTION_SUBMISSION_PERSISTED', input.executionId, { idempotencyKey: input.idempotencyKey, request: input.outboundRequest }));
     })();
     this.commitAuditFiles(events);
   }
@@ -152,7 +177,7 @@ export class Ledger {
       if (changed.changes !== 1) throw new Error(`Concurrent state transition detected for ${orderId}`);
       this.db.prepare('UPDATE executions SET state=? WHERE order_id=?').run(to, orderId);
       this.db.prepare('INSERT INTO order_transitions (order_id,from_state,to_state,reason,transitioned_at) VALUES (?,?,?,?,?)').run(orderId, from, to, reason, now);
-      event = this.insertAuditRow('STATE_TRANSITION', orderId, { from, to, reason, transitionedAt: now }, this.lastHash);
+      event = this.insertAuditRow('STATE_TRANSITION', orderId, { from, to, reason, transitionedAt: now });
     })();
     this.commitAuditFiles([event]);
   }
@@ -204,8 +229,18 @@ export class Ledger {
   close(): void { this.db.close(); }
 }
 
-export function computeEventHash(seq: number, timestamp: string, type: string, entityId: string, payload: Record<string, unknown>, prevHash: string): string {
-  const canonical = JSON.stringify({ seq, timestamp, type, entityId, payload, prevHash }, ['entityId','payload','prevHash','seq','timestamp','type']);
+export function computeEventHash(
+  seq: number,
+  timestamp: string,
+  type: string,
+  entityId: string,
+  payload: Record<string, unknown>,
+  prevHash: string,
+  canonicalizationFormat: string = CANONICAL_JSON_FORMAT,
+  hashFormat: string = AUDIT_HASH_FORMAT,
+): string {
+  if (canonicalizationFormat !== CANONICAL_JSON_FORMAT || hashFormat !== AUDIT_HASH_FORMAT) throw new Error('Unsupported audit integrity format');
+  const canonical = canonicalJson({ seq, timestamp, type, entityId, payload, prevHash, canonicalizationFormat, hashFormat });
   return createHash('sha256').update(canonical, 'utf8').digest('hex');
 }
 
@@ -214,10 +249,17 @@ export function verifyAuditChain(jsonlPath: string): { valid: boolean; brokenAt?
   const content = readFileSync(jsonlPath, 'utf-8').trim(); if (!content) return { valid: true };
   let prevHash = '0'.repeat(64); const lines = content.split('\n');
   for (let index = 0; index < lines.length; index++) {
-    const event = JSON.parse(lines[index]!) as AuditEvent;
+    let event: AuditEvent;
+    try { event = JSON.parse(lines[index]!) as AuditEvent; }
+    catch { return { valid: false, brokenAt: index + 1, error: `Invalid JSON at seq ${index + 1}` }; }
     if (event.seq !== index + 1) return { valid: false, brokenAt: index + 1, error: `Expected seq ${index + 1}, got ${event.seq}` };
     if (event.prevHash !== prevHash) return { valid: false, brokenAt: event.seq, error: `prevHash mismatch at seq ${event.seq}` };
-    if (event.hash !== computeEventHash(event.seq,event.timestamp,event.type,event.entityId,event.payload,event.prevHash)) return { valid: false, brokenAt: event.seq, error: `Hash mismatch at seq ${event.seq}` };
+    try {
+      const expected = computeEventHash(event.seq, event.timestamp, event.type, event.entityId, event.payload, event.prevHash, event.canonicalizationFormat, event.hashFormat);
+      if (event.hash !== expected) return { valid: false, brokenAt: event.seq, error: `Hash mismatch at seq ${event.seq}` };
+    } catch (error) {
+      return { valid: false, brokenAt: event.seq, error: error instanceof Error ? error.message : String(error) };
+    }
     prevHash = event.hash;
   }
   return { valid: true };

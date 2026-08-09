@@ -7,11 +7,12 @@ import { KeeperHubClient, type ExecutionStatus, type SimulationSuccess } from '.
 import { KeeperHubError, IdempotencyConflictError, IdempotencyInProgressError } from '../keeperhub/errors.ts';
 import { computeIdempotencyKey, deadlineBucket } from './idempotency.ts';
 import { collectFeeHistory, createRpcClient } from '../quoter/fee-history.ts';
-import { readNativeAssetUsd, buildChainlinkPrice } from '../quoter/fx.ts';
+import { Decimal } from 'decimal.js';
+import { readNativeAssetUsd, buildChainlinkPrice, assertPriceWithinDivergence } from '../quoter/fx.ts';
 import { priceQuote, type QuoteBreakdown } from '../quoter/price.ts';
 import { generateQuote, verifyQuoteSignature, isQuoteExpired, type Quote, type SimulationSummary } from '../quoter/quote.ts';
 import { Ledger } from '../ledger/database.ts';
-import { DEADLINE_TIERS, RETRY_PREMIUM_BPS, TARGET_MARGIN_BPS, FIXED_OVERHEAD_USD, PRICING_MODEL_VERSION, type DeadlineTier } from '../config/policy.ts';
+import { DEADLINE_TIERS, TARGET_MARGIN_BPS, FIXED_OVERHEAD_USD, PRICING_MODEL_VERSION, type DeadlineTier } from '../config/policy.ts';
 import { assertRequestMatchesIntent, assertSimulationMatchesIntent, keeperHubRequest, stableJson, toJsonValue, type CanonicalExecutionIntent, type PersistedExecutionIntent } from './intent.ts';
 import { verifyExecution, VerificationFailure, VerificationUncertain, type IndependentRpc } from './verify.ts';
 import type { OrderState } from './state-machine.ts';
@@ -22,8 +23,14 @@ export interface ExecutorConfig {
   signingKey: string;
   rpcUrls: Record<number, string>;
   rpcClientFactory?: (chainId: number, rpcUrl: string) => PublicClient;
+  environment?: 'local' | 'testnet' | 'production';
+  oracleMaxStalenessSeconds?: number;
+  oracleMaxDivergenceBps?: number;
+  oracleReference?: { priceUsd: string; updatedAt: number };
+  allowTestFxFallback?: boolean;
+  testFxFallbackUsd?: string;
 }
-export interface QuoteRequest { jobType: string; params: unknown; chainId: number; deadlineTier: DeadlineTier; privateRouting?: boolean; }
+export interface QuoteRequest { jobType: string; params: unknown; chainId: number; deadlineTier: DeadlineTier; }
 export interface ExecutionResult { executionId: string; keeperhubExecutionId?: string; orderId: string; status: OrderState; transactionHash?: string; gasUsed?: string; sponsored: boolean; error?: string; deadlineHit?: boolean; }
 
 export class BasisExecutor {
@@ -32,8 +39,10 @@ export class BasisExecutor {
   private signingKey: string;
   private rpcUrls: Record<number, string>;
   private rpcClientFactory: (chainId: number, rpcUrl: string) => PublicClient;
+  private config: ExecutorConfig;
 
   constructor(config: ExecutorConfig) {
+    this.config = config;
     this.keeperHubClient = config.keeperHubClient;
     this.ledger = config.ledger;
     this.signingKey = config.signingKey;
@@ -42,7 +51,7 @@ export class BasisExecutor {
   }
 
   async requestQuote(request: QuoteRequest): Promise<Quote> {
-    const { jobType, params, chainId, deadlineTier, privateRouting = false } = request;
+    const { jobType, params, chainId, deadlineTier } = request;
     const adapter = registry.require(jobType);
     if (!adapter.meta.supportedChains.includes(chainId)) throw new Error(`Adapter ${jobType} does not support chain ${chainId}`);
     const validatedParams = adapter.validateParams(params, chainId);
@@ -57,11 +66,36 @@ export class BasisExecutor {
 
     const rpcClient = this.createRpc(chainId);
     const feeHistory = await collectFeeHistory(rpcClient);
+    const reference = this.config.oracleReference;
+    const maxStaleness = this.config.oracleMaxStalenessSeconds ?? 3600;
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    if (reference && (nowSeconds - reference.updatedAt < 0 || nowSeconds - reference.updatedAt > maxStaleness)) {
+      throw new Error('Independent oracle reference is stale or future-dated');
+    }
     let chainlinkPrice;
-    try { chainlinkPrice = await readNativeAssetUsd(rpcClient, chainId); }
-    catch { chainlinkPrice = buildChainlinkPrice('3100.00', chainId); }
+    let oracleEvidence;
+    try {
+      chainlinkPrice = await readNativeAssetUsd(rpcClient, chainId, {
+        maxStalenessSeconds: maxStaleness,
+        referencePriceUsd: reference ? new Decimal(reference.priceUsd) : undefined,
+        maxDivergenceBps: this.config.oracleMaxDivergenceBps ?? 500,
+      });
+      const divergence = reference
+        ? assertPriceWithinDivergence(chainlinkPrice.priceUsd, new Decimal(reference.priceUsd), this.config.oracleMaxDivergenceBps ?? 500)
+        : undefined;
+      oracleEvidence = {
+        source: 'chainlink' as const,
+        observedAt: new Date().toISOString(),
+        feedUpdatedAt: new Date(chainlinkPrice.updatedAt * 1000).toISOString(),
+        ...(reference ? { referencePriceUsd: reference.priceUsd, divergenceBps: divergence!.toFixed(2) } : {}),
+      };
+    } catch (error) {
+      if (this.config.environment === 'production' || !this.config.allowTestFxFallback || !this.config.testFxFallbackUsd) throw error;
+      chainlinkPrice = buildChainlinkPrice(this.config.testFxFallbackUsd, chainId);
+      oracleEvidence = { source: 'explicit-non-production-fallback' as const, observedAt: new Date().toISOString() };
+    }
     const policy = DEADLINE_TIERS[deadlineTier];
-    const breakdown: QuoteBreakdown = priceQuote({ gasEstimate, feeSamples: feeHistory.samples, feePercentileTarget: policy.feePercentile, nativeAssetUsd: chainlinkPrice.priceUsd, retryPremiumBps: RETRY_PREMIUM_BPS[deadlineTier], targetMarginBps: TARGET_MARGIN_BPS, fixedOverheadUsd: FIXED_OVERHEAD_USD, privateRouting, pricingModelVersion: PRICING_MODEL_VERSION });
+    const breakdown: QuoteBreakdown = priceQuote({ gasEstimate, feeSamples: feeHistory.samples, feePercentileTarget: policy.feePercentile, nativeAssetUsd: chainlinkPrice.priceUsd, targetMarginBps: TARGET_MARGIN_BPS, fixedOverheadUsd: FIXED_OVERHEAD_USD, pricingModelVersion: PRICING_MODEL_VERSION });
     const now = new Date();
     const deadlineAt = new Date(now.getTime() + policy.horizonSeconds * 1000);
     const expiresAt = new Date(now.getTime() + policy.quoteValiditySeconds * 1000);
@@ -83,8 +117,8 @@ export class BasisExecutor {
       validatedParams: toJsonValue(validatedParams),
     };
     const simSummary: SimulationSummary = { success: true, wouldRevert: false, from: simulation.from, to: simulation.to, gasEstimate: simulation.gasEstimate, functionName: simulationRequest.functionName, functionArgs: simulationRequest.functionArgs, abi: simulationRequest.abi, value: simulationRequest.value };
-    const quote = generateQuote({ jobHash, jobType, chainId, deadlineTier, deadlineAt, expiresAt, gasEstimate, nativeAssetUsd: chainlinkPrice.priceUsd, breakdown, simulation: simSummary, intent }, this.signingKey);
-    this.ledger.insertQuote({ quoteId: quote.quoteId, jobHash: quote.jobHash, jobType: quote.jobType, chainId: quote.chainId, deadlineTier: quote.deadlineTier, deadlineAt: quote.deadlineAt, expiresAt: quote.expiresAt, priceUsd: quote.priceUsd, paymentTier: quote.paymentTier, pricingModelVersion: quote.pricingModelVersion, breakdown: quote.breakdown as unknown as Record<string, unknown>, simulation: quote.simulation as unknown as Record<string, unknown>, intent: quote.intent as unknown as Record<string, unknown>, signature: quote.signature, issuedAt: quote.issuedAt });
+    const quote = generateQuote({ jobHash, jobType, chainId, deadlineTier, deadlineAt, expiresAt, gasEstimate, nativeAssetUsd: chainlinkPrice.priceUsd, breakdown, simulation: simSummary, intent, oracleEvidence }, this.signingKey);
+    this.ledger.insertQuote({ quoteId: quote.quoteId, jobHash: quote.jobHash, jobType: quote.jobType, chainId: quote.chainId, deadlineTier: quote.deadlineTier, deadlineAt: quote.deadlineAt, expiresAt: quote.expiresAt, priceUsd: quote.priceUsd, paymentTier: quote.paymentTier, pricingModelVersion: quote.pricingModelVersion, breakdown: quote.breakdown as unknown as Record<string, unknown>, simulation: quote.simulation as unknown as Record<string, unknown>, intent: quote.intent as unknown as Record<string, unknown>, oracleEvidence: quote.oracleEvidence as unknown as Record<string, unknown>, canonicalizationFormat: quote.canonicalizationFormat, signatureFormat: quote.signatureFormat, signature: quote.signature, issuedAt: quote.issuedAt });
     this.ledger.appendEvent('QUOTE_ISSUED', quote.quoteId, { jobHash, jobType, chainId, deadlineTier, priceUsd: quote.priceUsd, paymentTier: quote.paymentTier });
     return quote;
   }

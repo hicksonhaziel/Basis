@@ -20,13 +20,15 @@ function makeBreakdown(): QuoteBreakdown {
     marketExecutionCostUsd: new Decimal('0.016'),
     riskCostUsd: new Decimal('0.0016'),
     privateRoutingFeeUsd: new Decimal('0'),
+    marketplaceFeeUsd: new Decimal('0.009471428571428571'),
+    marketplaceFeeBps: 3000,
     fixedOverheadUsd: new Decimal('0.001'),
     targetMarginUsd: new Decimal('0.0035'),
     rawPriceUsd: new Decimal('0.0221'),
     tierRoundingUsd: new Decimal('0.0279'),
     payableTierUsd: new Decimal('0.05'),
     paymentTier: 'basis-order-t2',
-    pricingModelVersion: 'basis-v1',
+    pricingModelVersion: 'basis-v2',
   };
 }
 
@@ -63,6 +65,13 @@ function makeQuoteParams(overrides: Partial<QuoteParams> = {}): QuoteParams {
       deadlineAt: new Date(now.getTime() + 300_000).toISOString(),
       validatedParams: {},
     },
+    oracleEvidence: {
+      source: 'chainlink',
+      observedAt: now.toISOString(),
+      feedUpdatedAt: now.toISOString(),
+      referencePriceUsd: '2500',
+      divergenceBps: '0.00',
+    },
     ...overrides,
   };
 }
@@ -88,10 +97,34 @@ describe('quoter/quote', () => {
     assert.equal(verifyQuoteSignature(quote, WRONG_KEY), false);
   });
 
-  it('signature verification rejects nested canonical intent tampering', () => {
+  it('signature verification rejects tampering in every nested signed area', () => {
+    const mutations: Array<(quote: Quote) => void> = [
+      (quote) => { quote.intent.validatedParams = { recipient: { address: '0x3333333333333333333333333333333333333333' } }; },
+      (quote) => { quote.simulation.gasEstimate = '999999'; },
+      (quote) => { quote.breakdown.marketplaceFeeUsd = '0.00000000'; },
+      (quote) => { quote.oracleEvidence.source = 'explicit-non-production-fallback'; },
+    ];
+    for (const mutate of mutations) {
+      const quote = generateQuote(makeQuoteParams(), SIGNING_KEY);
+      mutate(quote);
+      assert.equal(verifyQuoteSignature(quote, SIGNING_KEY), false);
+    }
+  });
+
+  it('requires exact integrity formats and a well-formed timing-safe MAC', () => {
     const quote = generateQuote(makeQuoteParams(), SIGNING_KEY);
-    quote.intent.target = '0x3333333333333333333333333333333333333333';
+    quote.signatureFormat = 'hmac-sha256:v1' as Quote['signatureFormat'];
     assert.equal(verifyQuoteSignature(quote, SIGNING_KEY), false);
+    quote.signature = 'not-a-mac';
+    assert.equal(verifyQuoteSignature(quote, SIGNING_KEY), false);
+  });
+
+  it('canonical signatures are invariant to nested object key insertion order', () => {
+    const params = makeQuoteParams();
+    params.intent.validatedParams = { outer: { alpha: 1, beta: 2 } };
+    const quote = generateQuote(params, SIGNING_KEY);
+    quote.intent.validatedParams = { outer: { beta: 2, alpha: 1 } };
+    assert.equal(verifyQuoteSignature(quote, SIGNING_KEY), true);
   });
 
   it('expired quote detection works', () => {

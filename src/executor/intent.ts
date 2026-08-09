@@ -1,4 +1,7 @@
 import type { ExecuteContractCallRequest, SimulationSuccess } from '../keeperhub/client.ts';
+import { canonicalJson } from '../integrity/canonical.ts';
+
+export { canonicalJson as stableJson };
 
 export interface CanonicalExecutionIntent {
   adapterName: string;
@@ -42,13 +45,6 @@ export function keeperHubRequest(intent: CanonicalExecutionIntent): ExecuteContr
   };
 }
 
-export function stableJson(value: unknown): string {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
-  const record = value as Record<string, unknown>;
-  return `{${Object.keys(record).filter((key) => record[key] !== undefined).sort().map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`).join(',')}}`;
-}
-
 function simulationValueWei(value: string): bigint {
   if (/^\d+$/.test(value)) return BigInt(value);
   if (!/^\d+\.\d+$/.test(value)) throw new Error(`Invalid simulation value: ${value}`);
@@ -65,5 +61,5 @@ export function assertSimulationMatchesIntent(simulation: SimulationSuccess, int
 
 export function assertRequestMatchesIntent(request: ExecuteContractCallRequest, intent: CanonicalExecutionIntent): void {
   const expected = keeperHubRequest(intent);
-  if (stableJson(request) !== stableJson(expected)) throw new Error('Outbound KeeperHub request differs from signed canonical intent');
+  if (canonicalJson(request) !== canonicalJson(expected)) throw new Error('Outbound KeeperHub request differs from signed canonical intent');
 }

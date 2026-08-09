@@ -61,6 +61,10 @@ export interface ChainlinkPrice {
 export interface ChainlinkOptions {
   /** Maximum staleness in seconds before throwing (default: 3600 = 1 hour) */
   maxStalenessSeconds?: number;
+  /** Independently supplied reference price used to reject excessive divergence. */
+  referencePriceUsd?: Decimal;
+  /** Maximum absolute divergence from the independent reference (default: 500 = 5%). */
+  maxDivergenceBps?: number;
 }
 
 // ─── Reader ──────────────────────────────────────────────────────────────────
@@ -77,7 +81,7 @@ export async function readNativeAssetUsd(
   chainId: number,
   options: ChainlinkOptions = {},
 ): Promise<ChainlinkPrice> {
-  const { maxStalenessSeconds = 3600 } = options;
+  const { maxStalenessSeconds = 3600, referencePriceUsd, maxDivergenceBps = 500 } = options;
   const chain = getChain(chainId);
   const feedAddress = chain.chainlinkEthUsd;
 
@@ -89,7 +93,7 @@ export async function readNativeAssetUsd(
   });
 
   // Read latest round data
-  const [roundId, answer, , updatedAt] = await client.readContract({
+  const [roundId, answer, , updatedAt, answeredInRound] = await client.readContract({
     address: feedAddress,
     abi: AGGREGATOR_V3_ABI,
     functionName: 'latestRoundData',
@@ -100,9 +104,13 @@ export async function readNativeAssetUsd(
     throw new Error(`Chainlink returned non-positive price: ${answer} on chain ${chainId}`);
   }
 
-  // Validate staleness
+  if (updatedAt === 0n || answeredInRound < roundId) {
+    throw new Error(`Chainlink returned incomplete round ${roundId} on chain ${chainId}`);
+  }
+
   const now = Math.floor(Date.now() / 1000);
   const age = now - Number(updatedAt);
+  if (age < 0) throw new Error(`Chainlink price timestamp is in the future on chain ${chainId}`);
   if (age > maxStalenessSeconds) {
     throw new Error(
       `Chainlink price stale: ${age}s old (max ${maxStalenessSeconds}s) on chain ${chainId}`,
@@ -113,6 +121,7 @@ export async function readNativeAssetUsd(
   const priceUsd = new Decimal(answer.toString()).div(
     new Decimal(10).pow(Number(feedDecimals)),
   );
+  if (referencePriceUsd) assertPriceWithinDivergence(priceUsd, referencePriceUsd, maxDivergenceBps);
 
   return {
     priceUsd,
@@ -144,4 +153,18 @@ export function buildChainlinkPrice(
     roundId: 0n,
     chainId,
   };
+}
+
+export function assertPriceWithinDivergence(
+  primary: Decimal,
+  reference: Decimal,
+  maxDivergenceBps: number,
+): Decimal {
+  if (!primary.isPositive() || !reference.isPositive()) throw new Error('Oracle prices must be positive');
+  if (!Number.isInteger(maxDivergenceBps) || maxDivergenceBps < 0) throw new Error('Invalid maximum oracle divergence');
+  const divergenceBps = primary.sub(reference).abs().div(reference).mul(10_000);
+  if (divergenceBps.gt(maxDivergenceBps)) {
+    throw new Error(`Oracle price divergence ${divergenceBps.toFixed(2)}bps exceeds ${maxDivergenceBps}bps`);
+  }
+  return divergenceBps;
 }

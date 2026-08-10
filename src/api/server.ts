@@ -41,8 +41,8 @@ async function main(): Promise<void> {
   });
 
   const ledger = new Ledger(
-    'data/basis.db',
-    'data/audit.jsonl',
+    process.env['DATABASE_PATH'] ?? 'data/basis.db',
+    process.env['AUDIT_PATH'] ?? 'data/audit.jsonl',
   );
 
   const executor = new BasisExecutor({

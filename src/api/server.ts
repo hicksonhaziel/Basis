@@ -81,7 +81,7 @@ async function main(): Promise<void> {
 
   // Register routes
   registerQuoteRoutes(app, executor, ledger);
-  registerOrderRoutes(app, executor, ledger, env.orderIngressSecret);
+  registerOrderRoutes(app, executor, ledger, env.paidWorkflowCredentials, env.basisSigningKey);
   registerStatusRoutes(app, executor, ledger);
   registerMetricsRoutes(app, executor, ledger);
 

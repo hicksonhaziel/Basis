@@ -1,30 +1,25 @@
 # Basis security boundary
 
-Basis runtime is deterministic and requires no model provider. Pricing, adapter selection, simulation comparison, order admission, state transitions, KeeperHub submission, receipt verification, reconciliation, and reporting use explicit TypeScript rules.
+Basis runtime is deterministic and requires no model provider. Pricing, adapter selection, simulation comparison, order admission, state transitions, KeeperHub Direct Execution, independent receipt verification, reconciliation, and reporting use explicit TypeScript rules.
 
-## Private order ingress
+## Paid Marketplace callback ingress
 
-`POST /orders` requires both:
+The four paid wrappers use separate environment-only bearer credentials: `BASIS_ORDER_T1_SECRET` through `BASIS_ORDER_T4_SECRET`. Each must contain at least 32 random bytes and must be distinct. KeeperHub supplies the applicable credential from that tier's private Webhook action; it is not Marketplace input, output, or persisted data. The backend derives the tier only from the timing-safe credential match and rejects legacy payment/source headers.
 
-- `Authorization: Bearer <ORDER_INGRESS_SECRET>`
-- `x-basis-ingress-source: keeperhub-private-workflow`
+The callback body contains only `quoteId`. Contract, calldata, ABI, function, arguments, chain, native value, payment tier, payment hash, and refund recipient cannot be supplied or overridden by the callback. The signed quote is the authority for all of those execution fields.
 
-The bearer secret authenticates a private workflow-to-backend call. The source marker is defense-in-depth routing metadata. **Neither header proves payment or contains settlement metadata.** Marketplace users must never control either header.
+Current KeeperHub code verifies x402/MPP before the paid call and internally records protocol, payment chain, amount, workflow execution ID, credential hash, and payer when recoverable. It passes only the caller body into the workflow graph. The Webhook action therefore receives none of that settlement metadata, and KeeperHub exposes no authenticated seller API to query a payment by workflow execution ID. Basis records `MARKETPLACE_PAYMENT_AUTHORIZED`, `AUTHENTICATED_WORKFLOW_CALLBACK`, the authenticated tier, and `NOT_EXPOSED_TO_WORKFLOW`; it does not manufacture a transaction hash, receipt, or payer identity.
 
-Orders currently enter `AUTHENTICATED_INGRESS`, not `PAID`. A future paid KeeperHub workflow must demonstrate that KeeperHub gates invocation before Basis may use `PAID` or `VERIFIED_MARKETPLACE_PAYMENT`. Basis does not manufacture payment hashes.
+KeeperHub distinguishes paid Marketplace calls from owner/manual runs internally, but that marker is not exposed to the graph. Consequently the callback cannot independently prove that a wrapper was not owner-triggered. Operators must not manually execute paid wrapper workflows. This limitation must be resolved with KeeperHub-exposed payment context before refund automation relies on payer identity.
+
+## Refund recipient
+
+Every paid quote request requires a valid EVM `refundRecipient`. Basis normalizes it to lowercase and includes it in the signed canonical quote. The order callback cannot change it. It may differ from the Marketplace payer because KeeperHub does not expose payer identity to the workflow. Phase 4 stores this field for the next phase but executes no refund.
+
+## Asynchronous execution
+
+Atomic quote consumption, order creation, exact intent persistence, and submission-record creation happen before the callback returns HTTP 202. Execution then continues asynchronously. Duplicate or concurrent callbacks return the original deterministic order ID and do not submit again. Buyers poll `basis-status`; KeeperHub's roughly 25-second read-workflow wait is not an execution deadline.
 
 ## Execution truth
 
-`SUCCEEDED` requires all of the following:
-
-1. Exact re-simulation of the signed canonical intent.
-2. KeeperHub terminal completion with applicable verified successful receipts.
-3. Independent RPC transaction and successful receipt.
-4. Matching chain context, transaction hash, target, calldata, and native value.
-5. Every adapter postcondition passing.
-
-Timeouts and missing/ambiguous evidence enter `UNCERTAIN`. Reconciliation polls the original KeeperHub execution ID and never broadcasts again from `UNCERTAIN`.
-
-## Optional future natural-language intake
-
-The only reserved model boundary is plain language to an untrusted `JobProposal`. It is not implemented or enabled. Any future proposal must enter the same typed quote API and cannot access credentials, authorize payment, consume quotes, write the ledger, select unregistered adapters/contracts/chains, or trigger execution.
+`SUCCEEDED` still requires exact re-simulation, KeeperHub terminal completion with verified receipts, an independent successful RPC receipt, matching chain/hash/target/calldata/value, and all adapter postconditions. Timeouts and ambiguous evidence enter `UNCERTAIN`; reconciliation polls the original execution and never rebroadcasts from uncertainty.

@@ -18,6 +18,7 @@
 
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { Decimal } from 'decimal.js';
+import { getAddress } from 'viem';
 import type { QuoteBreakdown } from './price.ts';
 import type { DeadlineTier } from '../config/policy.ts';
 import type { CanonicalExecutionIntent } from '../executor/intent.ts';
@@ -66,6 +67,8 @@ export interface Quote {
   intent: CanonicalExecutionIntent;
   /** Signed price-source provenance and validation evidence. */
   oracleEvidence: OracleEvidence;
+  /** Deterministically normalized recipient for a future refund; no refund is executed in this phase. */
+  refundRecipient: `0x${string}`;
   /** HMAC-SHA-256 MAC over the versioned canonical payload */
   signature: string;
   /** When this quote was issued (ISO timestamp) */
@@ -116,6 +119,7 @@ export interface QuoteParams {
   simulation: SimulationSummary;
   intent: CanonicalExecutionIntent;
   oracleEvidence: OracleEvidence;
+  refundRecipient: string;
 }
 
 // ─── Quote Generation ────────────────────────────────────────────────────────
@@ -162,6 +166,7 @@ export function generateQuote(params: QuoteParams, signingKey: string): Quote {
     simulation: params.simulation,
     intent: params.intent,
     oracleEvidence: params.oracleEvidence,
+    refundRecipient: normalizeRefundRecipient(params.refundRecipient),
     issuedAt,
   };
 
@@ -223,4 +228,13 @@ function signQuote(payload: Omit<Quote, 'signature'>, signingKey: string): strin
   const hmac = createHmac('sha256', signingKey);
   hmac.update(canonical, 'utf8');
   return hmac.digest('hex');
+}
+
+export function normalizeRefundRecipient(value: string): `0x${string}` {
+  if (typeof value !== 'string') throw new Error('refundRecipient is required');
+  try {
+    return getAddress(value).toLowerCase() as `0x${string}`;
+  } catch {
+    throw new Error('refundRecipient must be a valid EVM address');
+  }
 }

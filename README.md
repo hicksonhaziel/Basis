@@ -41,3 +41,15 @@ npm run backtest:replay        # Requires an RPC connection
 ```
 
 `npm run verify:book` recomputes every event hash and checks exact sequence and `prevHash` continuity. The dashboard performs the same verification in the browser. See `docs/SECURITY.md` for trust boundaries and operational limitations.
+
+## KeeperHub Marketplace storefront
+
+Basis defines six read-only wrappers: `basis-quote`, four fixed-price `basis-order-t1` through `basis-order-t4` workflows, and `basis-status`. Set four distinct 32-byte-or-longer `BASIS_ORDER_T*_SECRET` values and `BASIS_PUBLIC_BASE_URL`; never commit them.
+
+```sh
+npm run marketplace:provision                 # read-only inventory + dry-run
+npm run marketplace:provision -- --apply      # create/update privately and validate
+npm run marketplace:provision -- --publish    # public listing; explicit approval only
+```
+
+Paid wrappers accept only `quoteId`; execution continues asynchronously and buyers poll status. KeeperHub does not expose payer/payment transaction metadata to workflow nodes, so Basis stores no fabricated payment hash or payer. A normalized `refundRecipient` is signed into each quote for the future refund phase, but refunds remain disabled. See `docs/MARKETPLACE.md` for confirmed protocol behavior, publication controls, and the dedicated `/mcp/w` Manual-input limitation.

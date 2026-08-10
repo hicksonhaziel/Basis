@@ -72,6 +72,7 @@ function makeQuoteParams(overrides: Partial<QuoteParams> = {}): QuoteParams {
       referencePriceUsd: '2500',
       divergenceBps: '0.00',
     },
+    refundRecipient: '0x4444444444444444444444444444444444444444',
     ...overrides,
   };
 }
@@ -95,6 +96,14 @@ describe('quoter/quote', () => {
   it('signature verification with wrong key fails', () => {
     const quote = generateQuote(makeQuoteParams(), SIGNING_KEY);
     assert.equal(verifyQuoteSignature(quote, WRONG_KEY), false);
+  });
+
+  it('requires, normalizes, and cryptographically binds refundRecipient', () => {
+    const normalized = generateQuote(makeQuoteParams({ refundRecipient: '0xAb5801a7D398351b8bE11C439e05C5B3259aeC9B' }), SIGNING_KEY);
+    assert.equal(normalized.refundRecipient, '0xab5801a7d398351b8be11c439e05c5b3259aec9b');
+    normalized.refundRecipient = '0x4444444444444444444444444444444444444444';
+    assert.equal(verifyQuoteSignature(normalized, SIGNING_KEY), false);
+    assert.throws(() => generateQuote(makeQuoteParams({ refundRecipient: '' }), SIGNING_KEY), /refundRecipient/);
   });
 
   it('signature verification rejects tampering in every nested signed area', () => {

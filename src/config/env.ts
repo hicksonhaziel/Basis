@@ -12,7 +12,12 @@ export interface BasisEnv {
   keeperHubBaseUrl: string;
   rpcUrls: Record<number, string>;
   basisSigningKey: string;
-  orderIngressSecret: string;
+  paidWorkflowCredentials: {
+    'basis-order-t1': string;
+    'basis-order-t2': string;
+    'basis-order-t3': string;
+    'basis-order-t4': string;
+  };
   erc20TransferAllowlist: Erc20TransferAllowance[];
   environment: 'local' | 'testnet' | 'production';
   oracleMaxStalenessSeconds: number;
@@ -63,9 +68,17 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): BasisEnv {
   const basisSigningKey = required('BASIS_SIGNING_KEY');
   if (basisSigningKey.length < 32) throw new Error('BASIS_SIGNING_KEY must be at least 32 characters');
 
-  const orderIngressSecret = required('ORDER_INGRESS_SECRET');
-  if (orderIngressSecret.length < 32) throw new Error('ORDER_INGRESS_SECRET must be at least 32 characters');
-  if (orderIngressSecret === basisSigningKey) throw new Error('ORDER_INGRESS_SECRET must differ from BASIS_SIGNING_KEY');
+  const paidWorkflowCredentials = {
+    'basis-order-t1': required('BASIS_ORDER_T1_SECRET'),
+    'basis-order-t2': required('BASIS_ORDER_T2_SECRET'),
+    'basis-order-t3': required('BASIS_ORDER_T3_SECRET'),
+    'basis-order-t4': required('BASIS_ORDER_T4_SECRET'),
+  };
+  for (const [tier, secret] of Object.entries(paidWorkflowCredentials)) {
+    if (Buffer.byteLength(secret) < 32) throw new Error(`${tier} secret must contain at least 32 bytes`);
+    if (secret === basisSigningKey) throw new Error(`${tier} secret must differ from BASIS_SIGNING_KEY`);
+  }
+  if (new Set(Object.values(paidWorkflowCredentials)).size !== 4) throw new Error('Paid workflow secrets must be distinct');
 
   const positiveInteger = (key: string, fallback: string): number => {
     const value = Number(optional(key, fallback));
@@ -99,7 +112,7 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): BasisEnv {
       11155111: optional('RPC_URL_SEPOLIA', 'https://rpc.sepolia.org'),
     },
     basisSigningKey,
-    orderIngressSecret,
+    paidWorkflowCredentials,
     erc20TransferAllowlist: parseErc20Allowlist(source['ERC20_TRANSFER_ALLOWLIST']),
     environment: environment as BasisEnv['environment'],
     oracleMaxStalenessSeconds,

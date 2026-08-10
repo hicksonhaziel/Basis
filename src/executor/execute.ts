@@ -11,7 +11,7 @@ import { Decimal } from 'decimal.js';
 import { readNativeAssetUsd, buildChainlinkPrice, assertPriceWithinDivergence } from '../quoter/fx.ts';
 import { priceQuote, type QuoteBreakdown } from '../quoter/price.ts';
 import { generateQuote, verifyQuoteSignature, isQuoteExpired, type Quote, type SimulationSummary } from '../quoter/quote.ts';
-import { Ledger } from '../ledger/database.ts';
+import { Ledger, type AdmissionInput } from '../ledger/database.ts';
 import { DEADLINE_TIERS, TARGET_MARGIN_BPS, FIXED_OVERHEAD_USD, PRICING_MODEL_VERSION, type DeadlineTier } from '../config/policy.ts';
 import { assertRequestMatchesIntent, assertSimulationMatchesIntent, keeperHubRequest, stableJson, toJsonValue, type CanonicalExecutionIntent, type PersistedExecutionIntent } from './intent.ts';
 import { verifyExecution, VerificationFailure, VerificationUncertain, type IndependentRpc } from './verify.ts';
@@ -30,7 +30,7 @@ export interface ExecutorConfig {
   allowTestFxFallback?: boolean;
   testFxFallbackUsd?: string;
 }
-export interface QuoteRequest { jobType: string; params: unknown; chainId: number; deadlineTier: DeadlineTier; }
+export interface QuoteRequest { jobType: string; params: unknown; chainId: number; deadlineTier: DeadlineTier; refundRecipient: string; }
 export interface ExecutionResult { executionId: string; keeperhubExecutionId?: string; orderId: string; status: OrderState; transactionHash?: string; gasUsed?: string; sponsored: boolean; error?: string; deadlineHit?: boolean; }
 
 export class BasisExecutor {
@@ -51,7 +51,7 @@ export class BasisExecutor {
   }
 
   async requestQuote(request: QuoteRequest): Promise<Quote> {
-    const { jobType, params, chainId, deadlineTier } = request;
+    const { jobType, params, chainId, deadlineTier, refundRecipient } = request;
     const adapter = registry.require(jobType);
     if (!adapter.meta.supportedChains.includes(chainId)) throw new Error(`Adapter ${jobType} does not support chain ${chainId}`);
     const validatedParams = adapter.validateParams(params, chainId);
@@ -117,13 +117,18 @@ export class BasisExecutor {
       validatedParams: toJsonValue(validatedParams),
     };
     const simSummary: SimulationSummary = { success: true, wouldRevert: false, from: simulation.from, to: simulation.to, gasEstimate: simulation.gasEstimate, functionName: simulationRequest.functionName, functionArgs: simulationRequest.functionArgs, abi: simulationRequest.abi, value: simulationRequest.value };
-    const quote = generateQuote({ jobHash, jobType, chainId, deadlineTier, deadlineAt, expiresAt, gasEstimate, nativeAssetUsd: chainlinkPrice.priceUsd, breakdown, simulation: simSummary, intent, oracleEvidence }, this.signingKey);
-    this.ledger.insertQuote({ quoteId: quote.quoteId, jobHash: quote.jobHash, jobType: quote.jobType, chainId: quote.chainId, deadlineTier: quote.deadlineTier, deadlineAt: quote.deadlineAt, expiresAt: quote.expiresAt, priceUsd: quote.priceUsd, paymentTier: quote.paymentTier, pricingModelVersion: quote.pricingModelVersion, breakdown: quote.breakdown as unknown as Record<string, unknown>, simulation: quote.simulation as unknown as Record<string, unknown>, intent: quote.intent as unknown as Record<string, unknown>, oracleEvidence: quote.oracleEvidence as unknown as Record<string, unknown>, canonicalizationFormat: quote.canonicalizationFormat, signatureFormat: quote.signatureFormat, signature: quote.signature, issuedAt: quote.issuedAt });
+    const quote = generateQuote({ jobHash, jobType, chainId, deadlineTier, deadlineAt, expiresAt, gasEstimate, nativeAssetUsd: chainlinkPrice.priceUsd, breakdown, simulation: simSummary, intent, oracleEvidence, refundRecipient }, this.signingKey);
+    this.ledger.insertQuote({ quoteId: quote.quoteId, jobHash: quote.jobHash, jobType: quote.jobType, chainId: quote.chainId, deadlineTier: quote.deadlineTier, deadlineAt: quote.deadlineAt, expiresAt: quote.expiresAt, priceUsd: quote.priceUsd, paymentTier: quote.paymentTier, pricingModelVersion: quote.pricingModelVersion, breakdown: quote.breakdown as unknown as Record<string, unknown>, simulation: quote.simulation as unknown as Record<string, unknown>, intent: quote.intent as unknown as Record<string, unknown>, oracleEvidence: quote.oracleEvidence as unknown as Record<string, unknown>, canonicalizationFormat: quote.canonicalizationFormat, signatureFormat: quote.signatureFormat, refundRecipient: quote.refundRecipient, signature: quote.signature, issuedAt: quote.issuedAt });
     this.ledger.appendEvent('QUOTE_ISSUED', quote.quoteId, { jobHash, jobType, chainId, deadlineTier, priceUsd: quote.priceUsd, paymentTier: quote.paymentTier });
     return quote;
   }
 
-  async executeOrder(quote: Quote, orderId: string): Promise<ExecutionResult> {
+  async executeOrder(
+    quote: Quote,
+    orderId: string,
+    authorityKind: AdmissionInput['authorityKind'] = 'AUTHENTICATED_PRIVATE_WORKFLOW',
+    marketplaceTier?: string,
+  ): Promise<ExecutionResult> {
     const executionId = `exec_${randomUUID().replace(/-/g, '')}`;
     if (!verifyQuoteSignature(quote, this.signingKey)) throw new Error('Invalid quote signature');
     if (isQuoteExpired(quote)) throw new Error(`Quote expired at ${quote.expiresAt}`);
@@ -140,8 +145,10 @@ export class BasisExecutor {
     const intent: PersistedExecutionIntent = { ...quote.intent, quoteId: quote.quoteId, orderId, idempotencyKey };
     const outbound = keeperHubRequest(intent);
     assertRequestMatchesIntent(outbound, intent);
-    this.ledger.admitOrder({ quoteId: quote.quoteId, orderId, executionId, authorityKind: 'AUTHENTICATED_PRIVATE_WORKFLOW', paymentAmountUsd: quote.priceUsd, idempotencyKey, chainId: quote.chainId, intent, outboundRequest: outbound });
-    this.ledger.transitionOrder(orderId, 'RESIMULATING', 'authenticated private ingress admitted; payment not asserted');
+    this.ledger.admitOrder({ quoteId: quote.quoteId, orderId, executionId, authorityKind, callbackAuthKind: 'AUTHENTICATED_WORKFLOW_CALLBACK', marketplaceTier, settlementMetadataStatus: authorityKind === 'MARKETPLACE_PAYMENT_AUTHORIZED' ? 'NOT_EXPOSED_TO_WORKFLOW' : 'NOT_APPLICABLE', refundRecipient: quote.refundRecipient, paymentAmountUsd: quote.priceUsd, idempotencyKey, chainId: quote.chainId, intent, outboundRequest: outbound });
+    this.ledger.transitionOrder(orderId, 'RESIMULATING', authorityKind === 'MARKETPLACE_PAYMENT_AUTHORIZED'
+      ? 'tier-specific KeeperHub workflow callback authenticated; settlement details not exposed to workflow'
+      : 'authenticated private ingress admitted; payment not asserted');
 
     let resimulation: SimulationSuccess;
     try {

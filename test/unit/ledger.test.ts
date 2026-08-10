@@ -148,6 +148,7 @@ describe('ledger/database', () => {
       breakdown: { gasEstimate: '200000' },
       simulation: { success: true },
       signature: 'sig123',
+      refundRecipient: '0x4444444444444444444444444444444444444444',
       issuedAt: '2026-08-08T12:00:00.000Z',
 
     });
@@ -173,6 +174,7 @@ describe('ledger/database', () => {
       breakdown: {},
       simulation: {},
       signature: 'sig456',
+      refundRecipient: '0x4444444444444444444444444444444444444444',
       issuedAt: '2026-08-08T12:00:00.000Z',
     });
 

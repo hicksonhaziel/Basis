@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS quotes (
   oracle_evidence_json TEXT NOT NULL,
   canonicalization_format TEXT NOT NULL,
   signature_format TEXT NOT NULL,
+  refund_recipient TEXT NOT NULL,
   signature TEXT NOT NULL,
   issued_at TEXT NOT NULL,
   consumed INTEGER NOT NULL DEFAULT 0,
@@ -40,6 +41,10 @@ CREATE TABLE IF NOT EXISTS orders (
   quote_id TEXT NOT NULL UNIQUE REFERENCES quotes(quote_id),
   state TEXT NOT NULL DEFAULT 'AUTHENTICATED_INGRESS',
   authority_kind TEXT NOT NULL,
+  callback_auth_kind TEXT NOT NULL,
+  marketplace_tier TEXT,
+  settlement_metadata_status TEXT NOT NULL,
+  refund_recipient TEXT NOT NULL,
   payment_amount_usd TEXT NOT NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL

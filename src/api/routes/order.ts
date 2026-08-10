@@ -1,81 +1,113 @@
-/** POST /orders — authenticated private-workflow ingress. This endpoint does not prove payment. */
-
-import { randomUUID, timingSafeEqual } from 'node:crypto';
+/** Tier-authenticated callback for the four paid KeeperHub Marketplace wrappers. */
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { Type } from '@sinclair/typebox';
 import type { FastifyInstance } from 'fastify';
 import type { BasisExecutor } from '../../executor/execute.ts';
 import type { Ledger } from '../../ledger/database.ts';
-import { isQuoteExpired } from '../../quoter/quote.ts';
-import type { Quote } from '../../quoter/quote.ts';
+import { isQuoteExpired, verifyQuoteSignature, type Quote } from '../../quoter/quote.ts';
 
-const INGRESS_SOURCE = 'keeperhub-private-workflow';
-const OrderRequestBody = Type.Object({ quoteId: Type.String({ minLength: 1 }) }, { additionalProperties: false });
+export type PaidTier = 'basis-order-t1' | 'basis-order-t2' | 'basis-order-t3' | 'basis-order-t4';
+export type TierCredentials = Record<PaidTier, string>;
 
-function secretMatches(header: string | undefined, expected: string): boolean {
-  if (!header?.startsWith('Bearer ')) return false;
+const OrderRequestBody = Type.Object(
+  { quoteId: Type.String({ minLength: 1 }) },
+  { additionalProperties: false },
+);
+
+function credentialTier(header: string | undefined, credentials: TierCredentials): PaidTier | null {
+  if (!header?.startsWith('Bearer ')) return null;
   const supplied = Buffer.from(header.slice(7));
-  const wanted = Buffer.from(expected);
-  return supplied.length === wanted.length && timingSafeEqual(supplied, wanted);
+  let matched: PaidTier | null = null;
+  for (const [tier, secret] of Object.entries(credentials) as Array<[PaidTier, string]>) {
+    const expected = Buffer.from(secret);
+    if (supplied.length === expected.length && timingSafeEqual(supplied, expected)) matched = tier;
+  }
+  return matched;
+}
+
+function quoteFromRow(row: Record<string, unknown>): Quote {
+  return {
+    canonicalizationFormat: row.canonicalization_format as Quote['canonicalizationFormat'],
+    signatureFormat: row.signature_format as Quote['signatureFormat'],
+    quoteId: row.quote_id as string,
+    jobHash: row.job_hash as string,
+    jobType: row.job_type as string,
+    chainId: row.chain_id as number,
+    deadlineTier: row.deadline_tier as Quote['deadlineTier'],
+    deadlineAt: row.deadline_at as string,
+    expiresAt: row.expires_at as string,
+    priceUsd: row.price_usd as string,
+    paymentTier: row.payment_tier as string,
+    pricingModelVersion: row.pricing_model_version as string,
+    breakdown: JSON.parse(row.breakdown_json as string),
+    simulation: JSON.parse(row.simulation_json as string),
+    intent: JSON.parse(row.intent_json as string),
+    oracleEvidence: JSON.parse(row.oracle_evidence_json as string),
+    refundRecipient: row.refund_recipient as `0x${string}`,
+    signature: row.signature as string,
+    issuedAt: row.issued_at as string,
+  };
+}
+
+function stableOrderId(quoteId: string): string {
+  return `ord_${createHash('sha256').update(`keeperhub-marketplace:${quoteId}`).digest('hex').slice(0, 32)}`;
 }
 
 export function registerOrderRoutes(
   app: FastifyInstance,
   executor: BasisExecutor,
   ledger: Ledger,
-  orderIngressSecret: string,
+  credentials: TierCredentials,
+  signingKey: string,
 ): void {
-  if (orderIngressSecret.length < 32) throw new Error('Order ingress secret must be at least 32 characters');
+  for (const [tier, secret] of Object.entries(credentials)) {
+    if (Buffer.byteLength(secret) < 32) throw new Error(`${tier} credential must contain at least 32 bytes`);
+  }
+  if (new Set(Object.values(credentials)).size !== 4) throw new Error('Paid tier workflow credentials must be distinct');
 
-  app.post('/orders', { schema: { body: OrderRequestBody } }, async (request, reply) => {
-    if (!secretMatches(request.headers.authorization, orderIngressSecret)) {
-      return reply.status(401).send({ error: 'Unauthorized order ingress' });
+  app.post('/orders', {
+    schema: { body: OrderRequestBody },
+    preValidation: async (request, reply) => {
+      const body = request.body as Record<string, unknown> | null;
+      if (!body || Object.keys(body).length !== 1 || typeof body.quoteId !== 'string') {
+        return reply.status(400).send({ error: 'Paid order callback accepts only quoteId' });
+      }
+    },
+  }, async (request, reply) => {
+    if (request.headers['x-basis-payment-authority'] !== undefined || request.headers['x-basis-ingress-source'] !== undefined) {
+      return reply.status(400).send({ error: 'Legacy payment/source headers are not accepted as payment proof' });
     }
-    if (request.headers['x-basis-ingress-source'] !== INGRESS_SOURCE) {
-      return reply.status(403).send({ error: 'Missing trusted private-workflow ingress marker; this marker is not payment proof' });
-    }
+    const authenticatedTier = credentialTier(request.headers.authorization, credentials);
+    if (!authenticatedTier) return reply.status(401).send({ error: 'Invalid paid workflow credential' });
 
     try {
       const { quoteId } = request.body as { quoteId: string };
-      const quoteRow = ledger.getDb().prepare('SELECT * FROM quotes WHERE quote_id = ?').get(quoteId) as Record<string, unknown> | undefined;
+      const quoteRow = ledger.getDb().prepare('SELECT * FROM quotes WHERE quote_id=?').get(quoteId) as Record<string, unknown> | undefined;
       if (!quoteRow) return reply.status(400).send({ error: `Quote not found: ${quoteId}` });
-
-      const quote: Quote = {
-        canonicalizationFormat: quoteRow.canonicalization_format as Quote['canonicalizationFormat'],
-        signatureFormat: quoteRow.signature_format as Quote['signatureFormat'],
-        quoteId: quoteRow.quote_id as string,
-        jobHash: quoteRow.job_hash as string,
-        jobType: quoteRow.job_type as string,
-        chainId: quoteRow.chain_id as number,
-        deadlineTier: quoteRow.deadline_tier as Quote['deadlineTier'],
-        deadlineAt: quoteRow.deadline_at as string,
-        expiresAt: quoteRow.expires_at as string,
-        priceUsd: quoteRow.price_usd as string,
-        paymentTier: quoteRow.payment_tier as string,
-        pricingModelVersion: quoteRow.pricing_model_version as string,
-        breakdown: JSON.parse(quoteRow.breakdown_json as string),
-        simulation: JSON.parse(quoteRow.simulation_json as string),
-        intent: JSON.parse(quoteRow.intent_json as string),
-        oracleEvidence: JSON.parse(quoteRow.oracle_evidence_json as string),
-        signature: quoteRow.signature as string,
-        issuedAt: quoteRow.issued_at as string,
-      };
-
-      if (quoteRow.consumed === 1) return reply.status(409).send({ error: `Quote ${quoteId} has already been consumed` });
+      const quote = quoteFromRow(quoteRow);
+      if (!verifyQuoteSignature(quote, signingKey)) return reply.status(400).send({ error: 'Invalid quote signature' });
       if (isQuoteExpired(quote)) return reply.status(400).send({ error: `Quote expired at ${quote.expiresAt}` });
+      if (quote.paymentTier !== authenticatedTier) {
+        return reply.status(403).send({ error: `Authenticated workflow tier ${authenticatedTier} cannot authorize ${quote.paymentTier}` });
+      }
+      if (!quote.refundRecipient) return reply.status(400).send({ error: 'Signed refundRecipient is required' });
 
-      const result = await executor.executeOrder(quote, `ord_${randomUUID().replace(/-/g, '')}`);
-      return reply.status(result.status === 'SUCCEEDED' ? 200 : 202).send({
-        orderId: result.orderId,
-        status: result.status,
-        transactionHash: result.transactionHash,
-        executionId: result.executionId,
-        gasUsed: result.gasUsed,
-        sponsored: result.sponsored,
-        error: result.error,
-      });
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Unknown error';
-      if (message.includes('already been consumed') || message.includes('Idempotency')) return reply.status(409).send({ error: message });
+      const existing = ledger.getDb().prepare('SELECT order_id,state FROM orders WHERE quote_id=?').get(quoteId) as { order_id: string; state: string } | undefined;
+      if (existing) return reply.status(202).send({ orderId: existing.order_id, state: existing.state, duplicate: true });
+
+      const orderId = stableOrderId(quoteId);
+      const execution = executor.executeOrder(quote, orderId, 'MARKETPLACE_PAYMENT_AUTHORIZED', authenticatedTier);
+      const admitted = ledger.getDb().prepare('SELECT order_id,state FROM orders WHERE quote_id=?').get(quoteId) as { order_id: string; state: string } | undefined;
+      if (!admitted) await execution;
+      else void execution.catch((error: unknown) => app.log.error({ err: error, orderId }, 'Asynchronous paid order execution failed'));
+
+      const accepted = admitted ?? ledger.getDb().prepare('SELECT order_id,state FROM orders WHERE quote_id=?').get(quoteId) as { order_id: string; state: string } | undefined;
+      if (!accepted) throw new Error('Asynchronous execution could not be started');
+      return reply.status(202).send({ orderId: accepted.order_id, state: accepted.state, duplicate: false });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      const existing = ledger.getDb().prepare('SELECT order_id,state FROM orders WHERE quote_id=?').get((request.body as { quoteId: string }).quoteId) as { order_id: string; state: string } | undefined;
+      if (existing) return reply.status(202).send({ orderId: existing.order_id, state: existing.state, duplicate: true });
       return reply.status(400).send({ error: message });
     }
   });

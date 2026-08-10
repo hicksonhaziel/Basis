@@ -17,7 +17,11 @@ export interface AdmissionInput {
   quoteId: string;
   orderId: string;
   executionId: string;
-  authorityKind: 'AUTHENTICATED_PRIVATE_WORKFLOW' | 'VERIFIED_MARKETPLACE_PAYMENT';
+  authorityKind: 'AUTHENTICATED_PRIVATE_WORKFLOW' | 'MARKETPLACE_PAYMENT_AUTHORIZED';
+  callbackAuthKind: 'AUTHENTICATED_WORKFLOW_CALLBACK';
+  marketplaceTier?: string;
+  settlementMetadataStatus: 'NOT_EXPOSED_TO_WORKFLOW' | 'NOT_APPLICABLE';
+  refundRecipient: string;
   paymentAmountUsd: string;
   idempotencyKey: string;
   chainId: number;
@@ -58,6 +62,11 @@ export class Ledger {
     add('quotes', 'oracle_evidence_json', "TEXT NOT NULL DEFAULT '{}'");
     add('quotes', 'canonicalization_format', "TEXT NOT NULL DEFAULT 'basis-canonical-json:v1'");
     add('quotes', 'signature_format', "TEXT NOT NULL DEFAULT 'hmac-sha256:v2'");
+    add('quotes', 'refund_recipient', "TEXT NOT NULL DEFAULT '0x0000000000000000000000000000000000000000'");
+    add('orders', 'callback_auth_kind', "TEXT NOT NULL DEFAULT 'LEGACY_UNKNOWN'");
+    add('orders', 'marketplace_tier', 'TEXT');
+    add('orders', 'settlement_metadata_status', "TEXT NOT NULL DEFAULT 'NOT_APPLICABLE'");
+    add('orders', 'refund_recipient', "TEXT NOT NULL DEFAULT '0x0000000000000000000000000000000000000000'");
     add('audit_events', 'canonicalization_format', "TEXT NOT NULL DEFAULT 'basis-canonical-json:v1'");
     add('audit_events', 'hash_format', "TEXT NOT NULL DEFAULT 'sha256:v2'");
     add('orders', 'authority_kind', "TEXT NOT NULL DEFAULT 'LEGACY_UNKNOWN'");
@@ -126,12 +135,12 @@ export class Ledger {
     quoteId: string; jobHash: string; jobType: string; chainId: number; deadlineTier: string; deadlineAt: string; expiresAt: string;
     priceUsd: string; paymentTier: string; pricingModelVersion: string; breakdown: Record<string, unknown>; simulation: Record<string, unknown>;
     intent?: Record<string, unknown>; oracleEvidence?: Record<string, unknown>; canonicalizationFormat?: string; signatureFormat?: string;
-    signature: string; issuedAt: string;
+    refundRecipient: string; signature: string; issuedAt: string;
   }): void {
-    this.db.prepare(`INSERT INTO quotes (quote_id,job_hash,job_type,chain_id,deadline_tier,deadline_at,expires_at,price_usd,payment_tier,pricing_model_version,breakdown_json,simulation_json,intent_json,oracle_evidence_json,canonicalization_format,signature_format,signature,issued_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+    this.db.prepare(`INSERT INTO quotes (quote_id,job_hash,job_type,chain_id,deadline_tier,deadline_at,expires_at,price_usd,payment_tier,pricing_model_version,breakdown_json,simulation_json,intent_json,oracle_evidence_json,canonicalization_format,signature_format,refund_recipient,signature,issued_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
       quote.quoteId, quote.jobHash, quote.jobType, quote.chainId, quote.deadlineTier, quote.deadlineAt, quote.expiresAt, quote.priceUsd,
       quote.paymentTier, quote.pricingModelVersion, JSON.stringify(quote.breakdown), JSON.stringify(quote.simulation), quote.intent ? JSON.stringify(quote.intent) : null,
-      JSON.stringify(quote.oracleEvidence ?? {}), quote.canonicalizationFormat ?? CANONICAL_JSON_FORMAT, quote.signatureFormat ?? 'hmac-sha256:v2', quote.signature, quote.issuedAt,
+      JSON.stringify(quote.oracleEvidence ?? {}), quote.canonicalizationFormat ?? CANONICAL_JSON_FORMAT, quote.signatureFormat ?? 'hmac-sha256:v2', quote.refundRecipient, quote.signature, quote.issuedAt,
     );
   }
 
@@ -144,14 +153,25 @@ export class Ledger {
     this.db.transaction(() => {
       const consumed = this.db.prepare('UPDATE quotes SET consumed=1, consumed_at=? WHERE quote_id=? AND consumed=0').run(now, input.quoteId);
       if (consumed.changes !== 1) throw new Error(`Quote ${input.quoteId} has already been consumed`);
-      this.db.prepare('INSERT INTO orders (order_id,quote_id,state,authority_kind,payment_amount_usd,created_at,updated_at) VALUES (?,?,?,?,?,?,?)').run(
-        input.orderId, input.quoteId, 'AUTHENTICATED_INGRESS', input.authorityKind, input.paymentAmountUsd, now, now,
+      this.db.prepare(`INSERT INTO orders
+        (order_id,quote_id,state,authority_kind,callback_auth_kind,marketplace_tier,settlement_metadata_status,refund_recipient,payment_amount_usd,created_at,updated_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(
+        input.orderId, input.quoteId, 'AUTHENTICATED_INGRESS', input.authorityKind, input.callbackAuthKind,
+        input.marketplaceTier ?? null, input.settlementMetadataStatus, input.refundRecipient, input.paymentAmountUsd, now, now,
       );
       this.db.prepare(`INSERT INTO executions (execution_id,order_id,idempotency_key,chain_id,state,canonical_intent_json,outbound_request_json,submission_state,started_at) VALUES (?,?,?,?,?,?,?,?,?)`).run(
         input.executionId, input.orderId, input.idempotencyKey, input.chainId, 'AUTHENTICATED_INGRESS', JSON.stringify(input.intent), JSON.stringify(input.outboundRequest), 'REQUEST_PERSISTED', now,
       );
       this.db.prepare('INSERT INTO order_transitions (order_id,from_state,to_state,reason,transitioned_at) VALUES (?,?,?,?,?)').run(input.orderId, 'QUOTED', 'AUTHENTICATED_INGRESS', input.authorityKind, now);
-      const created = this.insertAuditRow('ORDER_CREATED', input.orderId, { quoteId: input.quoteId, authorityKind: input.authorityKind, paid: input.authorityKind === 'VERIFIED_MARKETPLACE_PAYMENT' });
+      const created = this.insertAuditRow('ORDER_CREATED', input.orderId, {
+        quoteId: input.quoteId,
+        authorityKind: input.authorityKind,
+        callbackAuthKind: input.callbackAuthKind,
+        marketplaceTier: input.marketplaceTier,
+        settlementMetadataStatus: input.settlementMetadataStatus,
+        refundRecipient: input.refundRecipient,
+        marketplacePaymentAuthorized: input.authorityKind === 'MARKETPLACE_PAYMENT_AUTHORIZED',
+      });
       events.push(created, this.insertAuditRow('EXECUTION_SUBMISSION_PERSISTED', input.executionId, { idempotencyKey: input.idempotencyKey, request: input.outboundRequest }));
     })();
     this.commitAuditFiles(events);
@@ -161,7 +181,9 @@ export class Ledger {
   insertOrder(order: { orderId: string; quoteId: string; state: string; paymentTxHash?: string; paymentAmountUsd: string }): void {
     assertOrderState(order.state);
     const now = new Date().toISOString();
-    this.db.prepare('INSERT INTO orders (order_id,quote_id,state,authority_kind,payment_amount_usd,created_at,updated_at) VALUES (?,?,?,?,?,?,?)').run(order.orderId, order.quoteId, order.state, 'LEGACY_TEST', order.paymentAmountUsd, now, now);
+    this.db.prepare(`INSERT INTO orders
+      (order_id,quote_id,state,authority_kind,callback_auth_kind,settlement_metadata_status,refund_recipient,payment_amount_usd,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?)`).run(order.orderId, order.quoteId, order.state, 'LEGACY_TEST', 'LEGACY_UNKNOWN', 'NOT_APPLICABLE', '0x0000000000000000000000000000000000000000', order.paymentAmountUsd, now, now);
   }
 
   transitionOrder(orderId: string, to: OrderState, reason: string): void {

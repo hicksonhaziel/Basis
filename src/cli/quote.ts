@@ -30,6 +30,7 @@ const { values } = parseArgs({
     chain: { type: 'string', default: '84532' },
     amount: { type: 'string', default: '1000000000000000' },
     tier: { type: 'string', default: 'best-effort' },
+    'refund-recipient': { type: 'string' },
     help: { type: 'boolean', short: 'h', default: false },
   },
   strict: true,
@@ -45,6 +46,7 @@ Options:
   --chain <id>     Chain ID (default: 84532 = Base Sepolia)
   --amount <wei>   Amount of ETH to wrap in wei (default: 1000000000000000)
   --tier <tier>    Deadline tier: next-block | 5m | 1h | best-effort (default: best-effort)
+  --refund-recipient <address>  Required EVM recipient for any future refund
   -h, --help       Show this help
 
 Environment:
@@ -58,6 +60,11 @@ Environment:
 const chainId = parseInt(values.chain!, 10);
 const amount = values.amount!;
 const deadlineTier = values.tier! as DeadlineTier;
+const refundRecipient = values['refund-recipient'];
+if (!refundRecipient) {
+  console.error('--refund-recipient is required');
+  process.exit(1);
+}
 
 // Validate tier
 const validTiers: DeadlineTier[] = ['next-block', '5m', '1h', 'best-effort'];
@@ -110,6 +117,7 @@ async function main(): Promise<void> {
       params: { chainId, amount },
       chainId,
       deadlineTier,
+      refundRecipient: refundRecipient!,
     });
 
     console.log(`✓ Quote issued: ${quote.quoteId}\n`);

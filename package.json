@@ -18,6 +18,7 @@
     "verify:book": "node --experimental-strip-types src/cli/verify-book.ts",
     "backtest:replay": "node --experimental-strip-types backtest/replay.ts",
     "reconcile:report": "node --experimental-strip-types operator/reconcile-report.ts",
+    "marketplace:provision": "node --experimental-strip-types src/marketplace/provision.ts",
     "dashboard": "npx serve dashboard"
   },
   "dependencies": {

@@ -50,8 +50,9 @@ function makeQuote(ledger: Ledger, params: { failPostcondition?: boolean } = {})
     simulation: { success: true, wouldRevert: false, from: EXECUTOR, to: TARGET, gasEstimate: '50000', functionName: 'execute', functionArgs: '["7"]', abi: '[]' },
     intent: { adapterName: adapter.meta.jobType, adapterVersion: adapter.meta.version, chainId: 8453, target: TARGET, functionName: 'execute', functionArgs: '["7"]', abi: '[]', calldata: '0x1234', nativeValueWei: '0', executorAddress: EXECUTOR, deadlineAt: deadline.toISOString(), validatedParams: params },
     oracleEvidence: { source: 'chainlink', observedAt: new Date().toISOString(), feedUpdatedAt: new Date().toISOString() },
+    refundRecipient: '0x4444444444444444444444444444444444444444',
   }, KEY);
-  ledger.insertQuote({ quoteId: quote.quoteId, jobHash: quote.jobHash, jobType: quote.jobType, chainId: quote.chainId, deadlineTier: quote.deadlineTier, deadlineAt: quote.deadlineAt, expiresAt: quote.expiresAt, priceUsd: quote.priceUsd, paymentTier: quote.paymentTier, pricingModelVersion: quote.pricingModelVersion, breakdown: quote.breakdown as unknown as Record<string, unknown>, simulation: quote.simulation as unknown as Record<string, unknown>, intent: quote.intent as unknown as Record<string, unknown>, oracleEvidence: quote.oracleEvidence as unknown as Record<string, unknown>, canonicalizationFormat: quote.canonicalizationFormat, signatureFormat: quote.signatureFormat, signature: quote.signature, issuedAt: quote.issuedAt });
+  ledger.insertQuote({ quoteId: quote.quoteId, jobHash: quote.jobHash, jobType: quote.jobType, chainId: quote.chainId, deadlineTier: quote.deadlineTier, deadlineAt: quote.deadlineAt, expiresAt: quote.expiresAt, priceUsd: quote.priceUsd, paymentTier: quote.paymentTier, pricingModelVersion: quote.pricingModelVersion, breakdown: quote.breakdown as unknown as Record<string, unknown>, simulation: quote.simulation as unknown as Record<string, unknown>, intent: quote.intent as unknown as Record<string, unknown>, oracleEvidence: quote.oracleEvidence as unknown as Record<string, unknown>, canonicalizationFormat: quote.canonicalizationFormat, signatureFormat: quote.signatureFormat, refundRecipient: quote.refundRecipient, signature: quote.signature, issuedAt: quote.issuedAt });
   return quote;
 }
 
@@ -96,7 +97,7 @@ describe('production quote oracle policy', () => {
       environment: 'production', oracleReference: { priceUsd: '2500', updatedAt: Math.floor(Date.now() / 1000) },
       allowTestFxFallback: true, testFxFallbackUsd: '3100',
     });
-    await assert.rejects(executor.requestQuote({ jobType: adapter.meta.jobType, params: {}, chainId: 8453, deadlineTier: '5m' }), /oracle RPC unavailable/);
+    await assert.rejects(executor.requestQuote({ jobType: adapter.meta.jobType, params: {}, chainId: 8453, deadlineTier: '5m', refundRecipient: '0x4444444444444444444444444444444444444444' }), /oracle RPC unavailable/);
   });
 });
 
@@ -165,7 +166,7 @@ describe('deterministic execution lifecycle', () => {
 
 describe('atomicity and restart reconciliation', () => {
   it('concurrent attempts cannot consume one quote twice', () => {
-    const ledger = makeLedger(); const quote = makeQuote(ledger); const base = { quoteId: quote.quoteId, authorityKind: 'AUTHENTICATED_PRIVATE_WORKFLOW' as const, paymentAmountUsd: quote.priceUsd, idempotencyKey: quote.jobHash, chainId: 8453 };
+    const ledger = makeLedger(); const quote = makeQuote(ledger); const base = { quoteId: quote.quoteId, authorityKind: 'AUTHENTICATED_PRIVATE_WORKFLOW' as const, callbackAuthKind: 'AUTHENTICATED_WORKFLOW_CALLBACK' as const, settlementMetadataStatus: 'NOT_APPLICABLE' as const, refundRecipient: quote.refundRecipient, paymentAmountUsd: quote.priceUsd, idempotencyKey: quote.jobHash, chainId: 8453 };
     const intent1: PersistedExecutionIntent = { ...quote.intent, quoteId: quote.quoteId, orderId: 'o1', idempotencyKey: quote.jobHash };
     ledger.admitOrder({ ...base, orderId: 'o1', executionId: 'e1', intent: intent1, outboundRequest: keeperHubRequest(intent1) });
     const intent2 = { ...intent1, orderId: 'o2' };
@@ -175,7 +176,7 @@ describe('atomicity and restart reconciliation', () => {
 
   it('recovers a crash immediately after atomic admission', async () => {
     const ledger = makeLedger(); const quote = makeQuote(ledger); const intent: PersistedExecutionIntent = { ...quote.intent, quoteId: quote.quoteId, orderId: 'o_admitted', idempotencyKey: quote.jobHash };
-    ledger.admitOrder({ quoteId: quote.quoteId, orderId: 'o_admitted', executionId: 'e_admitted', authorityKind: 'AUTHENTICATED_PRIVATE_WORKFLOW', paymentAmountUsd: quote.priceUsd, idempotencyKey: quote.jobHash, chainId: 8453, intent, outboundRequest: keeperHubRequest(intent) });
+    ledger.admitOrder({ quoteId: quote.quoteId, orderId: 'o_admitted', executionId: 'e_admitted', authorityKind: 'AUTHENTICATED_PRIVATE_WORKFLOW', callbackAuthKind: 'AUTHENTICATED_WORKFLOW_CALLBACK', settlementMetadataStatus: 'NOT_APPLICABLE', refundRecipient: quote.refundRecipient, paymentAmountUsd: quote.priceUsd, idempotencyKey: quote.jobHash, chainId: 8453, intent, outboundRequest: keeperHubRequest(intent) });
     let simulations = 0; let sends = 0;
     const worker = new ReconciliationWorker(ledger, {
       simulate: async () => { simulations++; return simulation(); },
@@ -189,7 +190,7 @@ describe('atomicity and restart reconciliation', () => {
 
   it('periodic reconciliation does not race active foreground EXECUTING work', async () => {
     const ledger = makeLedger(); const quote = makeQuote(ledger); const intent: PersistedExecutionIntent = { ...quote.intent, quoteId: quote.quoteId, orderId: 'o_live', idempotencyKey: quote.jobHash };
-    ledger.admitOrder({ quoteId: quote.quoteId, orderId: 'o_live', executionId: 'e_live', authorityKind: 'AUTHENTICATED_PRIVATE_WORKFLOW', paymentAmountUsd: quote.priceUsd, idempotencyKey: quote.jobHash, chainId: 8453, intent, outboundRequest: keeperHubRequest(intent) });
+    ledger.admitOrder({ quoteId: quote.quoteId, orderId: 'o_live', executionId: 'e_live', authorityKind: 'AUTHENTICATED_PRIVATE_WORKFLOW', callbackAuthKind: 'AUTHENTICATED_WORKFLOW_CALLBACK', settlementMetadataStatus: 'NOT_APPLICABLE', refundRecipient: quote.refundRecipient, paymentAmountUsd: quote.priceUsd, idempotencyKey: quote.jobHash, chainId: 8453, intent, outboundRequest: keeperHubRequest(intent) });
     ledger.transitionOrder('o_live', 'RESIMULATING', 'fixture'); ledger.transitionOrder('o_live', 'EXECUTING', 'foreground owns execution');
     let statusReads = 0;
     const worker = new ReconciliationWorker(ledger, { getExecutionStatus: async () => { statusReads++; return { status: status(), pollIntervalHint: 0 }; } } as never, () => rpc());
@@ -199,7 +200,7 @@ describe('atomicity and restart reconciliation', () => {
 
   it('recovers a crash after submission through the exact persisted idempotent request', async () => {
     const ledger = makeLedger(); const quote = makeQuote(ledger); const intent: PersistedExecutionIntent = { ...quote.intent, quoteId: quote.quoteId, orderId: 'o_crash', idempotencyKey: quote.jobHash };
-    ledger.admitOrder({ quoteId: quote.quoteId, orderId: 'o_crash', executionId: 'e_crash', authorityKind: 'AUTHENTICATED_PRIVATE_WORKFLOW', paymentAmountUsd: quote.priceUsd, idempotencyKey: quote.jobHash, chainId: 8453, intent, outboundRequest: keeperHubRequest(intent) });
+    ledger.admitOrder({ quoteId: quote.quoteId, orderId: 'o_crash', executionId: 'e_crash', authorityKind: 'AUTHENTICATED_PRIVATE_WORKFLOW', callbackAuthKind: 'AUTHENTICATED_WORKFLOW_CALLBACK', settlementMetadataStatus: 'NOT_APPLICABLE', refundRecipient: quote.refundRecipient, paymentAmountUsd: quote.priceUsd, idempotencyKey: quote.jobHash, chainId: 8453, intent, outboundRequest: keeperHubRequest(intent) });
     ledger.transitionOrder('o_crash', 'RESIMULATING', 'fixture'); ledger.transitionOrder('o_crash', 'EXECUTING', 'request was sent before process crash');
     let sends = 0;
     const worker = new ReconciliationWorker(ledger, { executeContractCall: async () => { sends++; return { executionId: 'kh_recovered', status: 'completed', idempotentReplay: true }; }, getExecutionStatus: async () => ({ status: status({ executionId: 'kh_recovered' }), pollIntervalHint: 0 }) } as never, () => rpc());

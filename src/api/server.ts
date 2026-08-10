@@ -20,6 +20,9 @@ import { registerMetricsRoutes } from './routes/metrics.ts';
 import { ReconciliationWorker } from '../reconciliation/worker.ts';
 import { createRpcClient } from '../quoter/fee-history.ts';
 
+import { RefundEngine, type RefundRpc } from '../executor/refund.ts';
+import { REFUND_CHAIN_ID } from '../config/policy.ts';
+
 async function main(): Promise<void> {
   // Load environment
   const env = loadEnv();
@@ -55,6 +58,12 @@ async function main(): Promise<void> {
     testFxFallbackUsd: env.testFxFallbackUsd,
   });
 
+  const refundRpcUrl = env.rpcUrls[REFUND_CHAIN_ID]!;
+  const refundEngine = new RefundEngine(ledger, keeperHubClient, createRpcClient(REFUND_CHAIN_ID, refundRpcUrl) as unknown as RefundRpc, {
+    enabled: env.refundsEnabled,
+    confirmedWallet: env.refundWallet,
+    minimumConfirmations: env.refundMinimumConfirmations,
+  });
   const reconciler = new ReconciliationWorker(
     ledger,
     keeperHubClient,
@@ -63,6 +72,7 @@ async function main(): Promise<void> {
       if (!url) throw new Error(`No RPC URL configured for chain ${chainId}`);
       return createRpcClient(chainId, url);
     },
+    refundEngine,
   );
   await reconciler.runOnce(true);
   let reconciliationRunning = false;

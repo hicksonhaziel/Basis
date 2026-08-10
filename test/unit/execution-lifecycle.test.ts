@@ -79,7 +79,7 @@ async function executeScenario(options: { sim?: () => Promise<SimulationSuccess>
     pollUntilComplete: options.poll ?? (async () => status()),
   };
   const executor = new BasisExecutor({ keeperHubClient: keeper as never, ledger, signingKey: KEY, rpcUrls: { 8453: 'test' }, rpcClientFactory: () => options.rpc ?? rpc() });
-  const result = await executor.executeOrder(quote, `ord_${Math.random()}`);
+  const result = await executor.executeOrder(quote, `ord_${Math.random()}`, 'MARKETPLACE_PAYMENT_AUTHORIZED', quote.paymentTier);
   return { result, ledger, quote, sends: () => sends };
 }
 
@@ -106,7 +106,7 @@ describe('deterministic execution lifecycle', () => {
     const { result, ledger } = await executeScenario();
     assert.equal(result.status, 'SUCCEEDED');
     const order = ledger.getDb().prepare('SELECT state,authority_kind FROM orders').get() as any;
-    assert.deepEqual(order, { state: 'SUCCEEDED', authority_kind: 'AUTHENTICATED_PRIVATE_WORKFLOW' });
+    assert.deepEqual(order, { state: 'SUCCEEDED', authority_kind: 'MARKETPLACE_PAYMENT_AUTHORIZED' });
     assert.equal((ledger.getDb().prepare('SELECT COUNT(*) AS count FROM receipts WHERE keeperhub_verified=1 AND independent_verified=1').get() as any).count, 1);
   });
   it('re-simulation failure goes to REFUND_PENDING without submission', async () => {

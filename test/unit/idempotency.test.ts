@@ -58,7 +58,7 @@ describe('executor/idempotency', () => {
       canonical: 'erc20.transfer@1.0.0|8453|0xabc|1000000',
     };
     const executionKey = computeIdempotencyKey(canonical);
-    const refundKey = deriveRefundIdempotencyKey('q_abc123', '0xtxhash', '1000000');
+    const refundKey = deriveRefundIdempotencyKey({ refundPolicyId: 'basis-refund-v1-base-usdc', orderId: 'o_abc123', quoteId: 'q_abc123', chainId: 8453, tokenAddress: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', refundRecipient: '0x4444444444444444444444444444444444444444', atomicAmount: '1000000' });
     assert.notEqual(executionKey, refundKey);
     // Refund key is also 64 hex
     assert.equal(refundKey.length, 64);

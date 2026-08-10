@@ -21,7 +21,7 @@ Paid calls offer x402 with USDC on Base and MPP with USDC.e on Tempo. KeeperHub 
 
 The call route invokes the workflow with `triggerInput: body`. It does not add `PaymentMeta`, payment hash, receipt, transaction hash, listing slug, or Marketplace execution ID to trigger input. Therefore none can be included in the Basis Webhook payload. No authenticated seller endpoint for payment lookup by workflow execution ID exists; the earnings endpoint is aggregate reporting. Basis never accepts a caller-supplied `paymentTxHash` as proof.
 
-The paid route can distinguish paid calls from owner/manual runs internally, but does not expose that distinction to nodes. Tier-specific callback credentials identify which wrapper called Basis, not the payer. `refundRecipient` is consequently supplied by the quote requester, normalized, and cryptographically bound into the quote for the next refund phase; it may differ from the hidden Marketplace payer.
+The paid route can distinguish paid calls from owner/manual runs internally, but does not expose that distinction to nodes. Tier-specific callback credentials identify which wrapper called Basis, not the payer. `refundRecipient` is consequently supplied by the quote requester, normalized, and cryptographically bound into the quote under the fixed Base-USDC v1 policy; it may differ from the hidden Marketplace payer.
 
 Webhook actions return `{ success, statusCode, response }`, and listing `outputMapping` can expose the parsed response. Read calls wait for completion for about 25 seconds, then return `{ executionId, status: "running" }`; Basis order wrappers return acceptance quickly and execution continues asynchronously.
 

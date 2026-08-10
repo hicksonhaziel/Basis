@@ -47,21 +47,24 @@ export function deriveIdempotencyKey(
   return computeIdempotencyKey(canonical);
 }
 
-/**
- * Derive a refund idempotency key.
- * Refunds use a separate deterministic key so they cannot collide with execution keys.
- *
- * Format: sha256("refund" | quoteId | paymentTxHash | refundAmountAtomic)
- */
-export function deriveRefundIdempotencyKey(
-  quoteId: string,
-  paymentTxHash: string,
-  refundAmountAtomic: string,
-): string {
-  const canonical = ['refund', quoteId, paymentTxHash, refundAmountAtomic].join('|');
-  const hash = createHash('sha256');
-  hash.update(canonical, 'utf8');
-  return hash.digest('hex');
+export interface RefundIdempotencyFields {
+  refundPolicyId: string;
+  orderId: string;
+  quoteId: string;
+  chainId: number;
+  tokenAddress: string;
+  refundRecipient: string;
+  atomicAmount: string;
+}
+
+export function deriveRefundIdempotencyKey(fields: RefundIdempotencyFields): string {
+  const amount = canonicalAmount(fields.atomicAmount);
+  const canonical = [
+    'refund', escapeCanonicalField(fields.refundPolicyId), escapeCanonicalField(fields.orderId),
+    escapeCanonicalField(fields.quoteId), String(fields.chainId), canonicalAddress(fields.tokenAddress),
+    canonicalAddress(fields.refundRecipient), amount,
+  ].join('|');
+  return createHash('sha256').update(canonical, 'utf8').digest('hex');
 }
 
 /**

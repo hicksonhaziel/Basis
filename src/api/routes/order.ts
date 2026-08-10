@@ -4,7 +4,7 @@ import { Type } from '@sinclair/typebox';
 import type { FastifyInstance } from 'fastify';
 import type { BasisExecutor } from '../../executor/execute.ts';
 import type { Ledger } from '../../ledger/database.ts';
-import { isQuoteExpired, verifyQuoteSignature, type Quote } from '../../quoter/quote.ts';
+import { isQuoteExpired, verifyQuoteSignature, validateSignedRefundTerms, type Quote } from '../../quoter/quote.ts';
 
 export type PaidTier = 'basis-order-t1' | 'basis-order-t2' | 'basis-order-t3' | 'basis-order-t4';
 export type TierCredentials = Record<PaidTier, string>;
@@ -44,6 +44,11 @@ function quoteFromRow(row: Record<string, unknown>): Quote {
     intent: JSON.parse(row.intent_json as string),
     oracleEvidence: JSON.parse(row.oracle_evidence_json as string),
     refundRecipient: row.refund_recipient as `0x${string}`,
+    refundPolicyId: row.refund_policy_id as string,
+    refundChainId: row.refund_chain_id as number,
+    refundTokenAddress: row.refund_token_address as `0x${string}`,
+    grossRefundAmountUsd: row.gross_refund_amount_usd as string,
+    refundAmountAtomic: row.refund_amount_atomic as string,
     signature: row.signature as string,
     issuedAt: row.issued_at as string,
   };
@@ -90,6 +95,9 @@ export function registerOrderRoutes(
       if (quote.paymentTier !== authenticatedTier) {
         return reply.status(403).send({ error: `Authenticated workflow tier ${authenticatedTier} cannot authorize ${quote.paymentTier}` });
       }
+      const refundError = validateSignedRefundTerms(quote);
+      if (refundError) return reply.status(400).send({ error: refundError });
+      if (quote.priceUsd !== quote.grossRefundAmountUsd) return reply.status(400).send({ error: 'Signed quote price and gross refundable tier amount differ' });
       if (!quote.refundRecipient) return reply.status(400).send({ error: 'Signed refundRecipient is required' });
 
       const existing = ledger.getDb().prepare('SELECT order_id,state FROM orders WHERE quote_id=?').get(quoteId) as { order_id: string; state: string } | undefined;

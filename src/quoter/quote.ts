@@ -21,6 +21,7 @@ import { Decimal } from 'decimal.js';
 import { getAddress } from 'viem';
 import type { QuoteBreakdown } from './price.ts';
 import type { DeadlineTier } from '../config/policy.ts';
+import { refundTermsForTier } from '../config/policy.ts';
 import type { CanonicalExecutionIntent } from '../executor/intent.ts';
 import { canonicalJson, CANONICAL_JSON_FORMAT } from '../integrity/canonical.ts';
 
@@ -67,8 +68,13 @@ export interface Quote {
   intent: CanonicalExecutionIntent;
   /** Signed price-source provenance and validation evidence. */
   oracleEvidence: OracleEvidence;
-  /** Deterministically normalized recipient for a future refund; no refund is executed in this phase. */
+  /** Normalized recipient and immutable v1 gross-service-fee refund terms. */
   refundRecipient: `0x${string}`;
+  refundPolicyId: string;
+  refundChainId: number;
+  refundTokenAddress: `0x${string}`;
+  grossRefundAmountUsd: string;
+  refundAmountAtomic: string;
   /** HMAC-SHA-256 MAC over the versioned canonical payload */
   signature: string;
   /** When this quote was issued (ISO timestamp) */
@@ -149,6 +155,7 @@ export function generateQuote(params: QuoteParams, signingKey: string): Quote {
     tierRoundingUsd: params.breakdown.tierRoundingUsd.toFixed(8),
   };
 
+  const refundTerms = refundTermsForTier(params.breakdown.paymentTier);
   const quote: Omit<Quote, 'signature'> = {
     canonicalizationFormat: CANONICAL_JSON_FORMAT,
     signatureFormat: QUOTE_SIGNATURE_FORMAT,
@@ -159,7 +166,7 @@ export function generateQuote(params: QuoteParams, signingKey: string): Quote {
     deadlineTier: params.deadlineTier,
     deadlineAt: params.deadlineAt.toISOString(),
     expiresAt: params.expiresAt.toISOString(),
-    priceUsd: params.breakdown.payableTierUsd.toString(),
+    priceUsd: refundTerms.grossRefundAmountUsd,
     paymentTier: params.breakdown.paymentTier,
     pricingModelVersion: params.breakdown.pricingModelVersion,
     breakdown,
@@ -167,6 +174,7 @@ export function generateQuote(params: QuoteParams, signingKey: string): Quote {
     intent: params.intent,
     oracleEvidence: params.oracleEvidence,
     refundRecipient: normalizeRefundRecipient(params.refundRecipient),
+    ...refundTerms,
     issuedAt,
   };
 
@@ -237,4 +245,16 @@ export function normalizeRefundRecipient(value: string): `0x${string}` {
   } catch {
     throw new Error('refundRecipient must be a valid EVM address');
   }
+}
+
+export function validateSignedRefundTerms(quote: Quote): string | null {
+  let expected;
+  try { expected = refundTermsForTier(quote.paymentTier); }
+  catch (error) { return error instanceof Error ? error.message : String(error); }
+  if (!quote.refundPolicyId || !quote.refundAmountAtomic) return 'Quote is not compatible with the v1 refund policy';
+  if (quote.refundPolicyId !== expected.refundPolicyId || quote.refundChainId !== expected.refundChainId
+    || quote.refundTokenAddress?.toLowerCase() !== expected.refundTokenAddress
+    || quote.grossRefundAmountUsd !== expected.grossRefundAmountUsd
+    || quote.refundAmountAtomic !== expected.refundAmountAtomic) return 'Signed refund terms do not match authenticated tier policy';
+  return null;
 }

@@ -12,7 +12,7 @@ import { readNativeAssetUsd, buildChainlinkPrice, assertPriceWithinDivergence } 
 import { priceQuote, type QuoteBreakdown } from '../quoter/price.ts';
 import { generateQuote, verifyQuoteSignature, isQuoteExpired, type Quote, type SimulationSummary } from '../quoter/quote.ts';
 import { Ledger, type AdmissionInput } from '../ledger/database.ts';
-import { DEADLINE_TIERS, TARGET_MARGIN_BPS, FIXED_OVERHEAD_USD, PRICING_MODEL_VERSION, type DeadlineTier } from '../config/policy.ts';
+import { DEADLINE_TIERS, TARGET_MARGIN_BPS, FIXED_OVERHEAD_USD, PRICING_MODEL_VERSION, hasContractualDeadline, type DeadlineTier } from '../config/policy.ts';
 import { assertRequestMatchesIntent, assertSimulationMatchesIntent, keeperHubRequest, stableJson, toJsonValue, type CanonicalExecutionIntent, type PersistedExecutionIntent } from './intent.ts';
 import { verifyExecution, VerificationFailure, VerificationUncertain, type IndependentRpc } from './verify.ts';
 import type { OrderState } from './state-machine.ts';
@@ -118,7 +118,7 @@ export class BasisExecutor {
     };
     const simSummary: SimulationSummary = { success: true, wouldRevert: false, from: simulation.from, to: simulation.to, gasEstimate: simulation.gasEstimate, functionName: simulationRequest.functionName, functionArgs: simulationRequest.functionArgs, abi: simulationRequest.abi, value: simulationRequest.value };
     const quote = generateQuote({ jobHash, jobType, chainId, deadlineTier, deadlineAt, expiresAt, gasEstimate, nativeAssetUsd: chainlinkPrice.priceUsd, breakdown, simulation: simSummary, intent, oracleEvidence, refundRecipient }, this.signingKey);
-    this.ledger.insertQuote({ quoteId: quote.quoteId, jobHash: quote.jobHash, jobType: quote.jobType, chainId: quote.chainId, deadlineTier: quote.deadlineTier, deadlineAt: quote.deadlineAt, expiresAt: quote.expiresAt, priceUsd: quote.priceUsd, paymentTier: quote.paymentTier, pricingModelVersion: quote.pricingModelVersion, breakdown: quote.breakdown as unknown as Record<string, unknown>, simulation: quote.simulation as unknown as Record<string, unknown>, intent: quote.intent as unknown as Record<string, unknown>, oracleEvidence: quote.oracleEvidence as unknown as Record<string, unknown>, canonicalizationFormat: quote.canonicalizationFormat, signatureFormat: quote.signatureFormat, refundRecipient: quote.refundRecipient, signature: quote.signature, issuedAt: quote.issuedAt });
+    this.ledger.insertQuote({ quoteId: quote.quoteId, jobHash: quote.jobHash, jobType: quote.jobType, chainId: quote.chainId, deadlineTier: quote.deadlineTier, deadlineAt: quote.deadlineAt, expiresAt: quote.expiresAt, priceUsd: quote.priceUsd, paymentTier: quote.paymentTier, pricingModelVersion: quote.pricingModelVersion, breakdown: quote.breakdown as unknown as Record<string, unknown>, simulation: quote.simulation as unknown as Record<string, unknown>, intent: quote.intent as unknown as Record<string, unknown>, oracleEvidence: quote.oracleEvidence as unknown as Record<string, unknown>, canonicalizationFormat: quote.canonicalizationFormat, signatureFormat: quote.signatureFormat, refundRecipient: quote.refundRecipient, refundPolicyId: quote.refundPolicyId, refundChainId: quote.refundChainId, refundTokenAddress: quote.refundTokenAddress, grossRefundAmountUsd: quote.grossRefundAmountUsd, refundAmountAtomic: quote.refundAmountAtomic, signature: quote.signature, issuedAt: quote.issuedAt });
     this.ledger.appendEvent('QUOTE_ISSUED', quote.quoteId, { jobHash, jobType, chainId, deadlineTier, priceUsd: quote.priceUsd, paymentTier: quote.paymentTier });
     return quote;
   }
@@ -157,7 +157,7 @@ export class BasisExecutor {
       if (BigInt(resimulation.gasEstimate) > adapter.meta.maxGasEstimate) throw new Error(`Re-simulation gas estimate ${resimulation.gasEstimate} exceeds adapter max ${adapter.meta.maxGasEstimate}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      this.ledger.transitionOrder(orderId, 'REFUND_PENDING', `re-simulation rejected: ${message}; no refund is executed in this phase`);
+      this.markEligibleOrFail(orderId, authorityKind, 'RESIMULATION_FAILED', `re-simulation rejected before broadcast: ${message}`);
       return { executionId, orderId, status: 'REFUND_PENDING', sponsored: false, error: message };
     }
 
@@ -174,7 +174,7 @@ export class BasisExecutor {
         idempotentReplay = true;
       } else if (error instanceof IdempotencyConflictError) {
         this.ledger.transitionOrder(orderId, 'FAILED', 'KeeperHub idempotency conflict; fail closed');
-        this.ledger.transitionOrder(orderId, 'REFUND_PENDING', 'verified submission conflict; refund execution disabled in this phase');
+        this.markEligibleOrFail(orderId, authorityKind, 'EXECUTION_INTENT_INVALID', 'KeeperHub definitively rejected the persisted execution intent before acceptance');
         return { executionId, orderId, status: 'REFUND_PENDING', sponsored: false, error: error.message };
       } else {
         this.ledger.transitionOrder(orderId, 'UNCERTAIN', `submission result ambiguous: ${error instanceof Error ? error.message : String(error)}`);
@@ -192,7 +192,7 @@ export class BasisExecutor {
     }
     if (finalStatus.status === 'failed') {
       this.ledger.transitionOrder(orderId, 'FAILED', `KeeperHub reported failed: ${finalStatus.error ?? 'unknown error'}`);
-      this.ledger.transitionOrder(orderId, 'REFUND_PENDING', 'verified execution failure; refund execution disabled in this phase');
+      this.markEligibleOrFail(orderId, authorityKind, 'DEFINITIVE_EXECUTION_FAILURE', `KeeperHub definitively reported failed: ${finalStatus.error ?? 'unknown error'}`);
       return { executionId, keeperhubExecutionId, orderId, status: 'REFUND_PENDING', sponsored: finalStatus.sponsored, error: finalStatus.error ?? undefined };
     }
 
@@ -201,11 +201,11 @@ export class BasisExecutor {
       const verified = await verifyExecution(finalStatus, intent, adapter, params, this.createRpc(quote.chainId) as unknown as IndependentRpc);
       this.ledger.recordReceipt({ executionId, transactionHash: verified.transactionHash, chainId: quote.chainId, keeperHubVerified: true, independentVerified: true, receiptStatus: 'success', blockNumber: verified.blockNumber, gasUsed: verified.gasUsed, decodedLogs: verified.decodedLogs, postconditions: verified.postconditions });
       this.ledger.updateExecution(executionId, { transactionHash: verified.transactionHash, gasUsed: verified.gasUsed.toString(), gasUsedWei: finalStatus.gasUsedWei, sponsored: finalStatus.sponsored, completedAt: finalStatus.completedAt ?? new Date().toISOString() });
-      const late = new Date(finalStatus.completedAt ?? Date.now()).getTime() > new Date(quote.deadlineAt).getTime();
+      const late = hasContractualDeadline(quote.deadlineTier) && new Date(finalStatus.completedAt ?? Date.now()).getTime() > new Date(quote.deadlineAt).getTime();
       if (late) {
         this.ledger.transitionOrder(orderId, 'LATE', 'independently verified success completed after contractual deadline');
         this.ledger.appendEvent('EXECUTION_VERIFIED', executionId, { transactionHash: verified.transactionHash, blockNumber: verified.blockNumber.toString(), postconditions: verified.postconditions, deadlineHit: false });
-        this.ledger.transitionOrder(orderId, 'REFUND_PENDING', 'deadline missed; refund execution disabled in this phase');
+        this.markEligibleOrFail(orderId, authorityKind, 'CONTRACTUAL_DEADLINE_MISSED', 'deadline-backed execution independently verified after its contractual deadline');
         return { executionId, keeperhubExecutionId, orderId, status: 'REFUND_PENDING', transactionHash: verified.transactionHash, gasUsed: verified.gasUsed.toString(), sponsored: finalStatus.sponsored, deadlineHit: false };
       }
       this.ledger.transitionOrder(orderId, 'SUCCEEDED', 'KeeperHub receipt, independent RPC receipt, exact transaction, and adapter postconditions verified');
@@ -220,10 +220,18 @@ export class BasisExecutor {
       if (error instanceof VerificationFailure) {
         this.ledger.transitionOrder(orderId, 'FAILED', message);
         this.ledger.appendEvent('EXECUTION_FAILED', executionId, { error: message });
-        this.ledger.transitionOrder(orderId, 'REFUND_PENDING', 'deterministically verified execution failure; refund execution disabled in this phase');
+        this.markEligibleOrFail(orderId, authorityKind, 'VERIFIED_EXECUTION_OR_POSTCONDITION_FAILURE', message);
         return { executionId, keeperhubExecutionId, orderId, status: 'REFUND_PENDING', sponsored: finalStatus.sponsored, error: message };
       }
       throw error;
+    }
+  }
+
+  private markEligibleOrFail(orderId: string, authorityKind: AdmissionInput['authorityKind'], reason: string, detail: string): void {
+    if (authorityKind === 'MARKETPLACE_PAYMENT_AUTHORIZED') this.ledger.markRefundEligible(orderId, reason, detail);
+    else {
+      const row = this.ledger.getDb().prepare('SELECT state FROM orders WHERE order_id=?').get(orderId) as { state: OrderState };
+      if (row.state !== 'FAILED') this.ledger.transitionOrder(orderId, 'FAILED', `${detail}; no paid Marketplace authority`, 'execution-engine');
     }
   }
 

@@ -69,3 +69,33 @@ export function selectPaymentTier(rawPriceUsd: Decimal): { tier: string; price: 
 
 /** Pricing model version identifier */
 export const PRICING_MODEL_VERSION = 'basis-v2';
+
+/** Phase 5 fixed gross-service-fee refund rail. */
+export const REFUND_POLICY_ID = 'basis-refund-v1-base-usdc' as const;
+export const REFUND_CHAIN_ID = 8453 as const;
+export const REFUND_TOKEN_ADDRESS = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913' as const;
+export const REFUND_TOKEN_DECIMALS = 6 as const;
+export const REFUND_TIER_TERMS = {
+  'basis-order-t1': { amountUsd: '0.01', atomicAmount: 10_000n },
+  'basis-order-t2': { amountUsd: '0.05', atomicAmount: 50_000n },
+  'basis-order-t3': { amountUsd: '0.25', atomicAmount: 250_000n },
+  'basis-order-t4': { amountUsd: '1.00', atomicAmount: 1_000_000n },
+} as const;
+export type PaidTier = keyof typeof REFUND_TIER_TERMS;
+
+export function refundTermsForTier(tier: string) {
+  const terms = REFUND_TIER_TERMS[tier as PaidTier];
+  if (!terms) throw new Error(`Unsupported refundable Marketplace tier: ${tier}`);
+  return {
+    refundPolicyId: REFUND_POLICY_ID,
+    refundChainId: REFUND_CHAIN_ID,
+    refundTokenAddress: REFUND_TOKEN_ADDRESS,
+    grossRefundAmountUsd: terms.amountUsd,
+    refundAmountAtomic: terms.atomicAmount.toString(),
+  } as const;
+}
+
+/** best-effort has a scheduling preference, not a contractual timing guarantee. */
+export function hasContractualDeadline(tier: DeadlineTier): boolean {
+  return tier !== 'best-effort';
+}

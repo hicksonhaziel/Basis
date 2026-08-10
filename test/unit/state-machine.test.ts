@@ -15,7 +15,10 @@ describe('canonical execution state machine', () => {
     assert.equal(canTransition('UNCERTAIN', 'VERIFYING'), true);
     assert.equal(canTransition('VERIFYING', 'FAILED'), true);
     assert.equal(canTransition('FAILED', 'REFUND_PENDING'), true);
-    assert.equal(canTransition('REFUND_PENDING', 'REFUND_UNCERTAIN'), true);
+    assert.equal(canTransition('REFUND_PENDING', 'REFUND_SUBMITTING'), true);
+    assert.equal(canTransition('REFUND_SUBMITTING', 'REFUND_VERIFYING'), true);
+    assert.equal(canTransition('REFUND_VERIFYING', 'REFUND_UNCERTAIN'), true);
+    assert.equal(canTransition('REFUND_UNCERTAIN', 'REFUND_VERIFYING'), true);
   });
 
   it('rejects invalid shortcuts and transitions from terminal states', () => {

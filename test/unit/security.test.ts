@@ -170,4 +170,10 @@ describe('production configuration', () => {
     const env = loadEnv(productionEnv());
     assert.equal(Object.keys(env).some((key) => /llm|openai|anthropic/i.test(key)), false);
   });
+  it('defaults refunds off and fails closed when enabled without exact production rail configuration', () => {
+    assert.equal(loadEnv(productionEnv()).refundsEnabled, false);
+    assert.throws(() => loadEnv({ ...productionEnv(), BASIS_REFUNDS_ENABLED: 'true' }), /BASIS_REFUND_POLICY_ID/);
+    const configured = loadEnv({ ...productionEnv(), BASIS_REFUNDS_ENABLED: 'true', BASIS_REFUND_POLICY_ID: 'basis-refund-v1-base-usdc', BASE_USDC_ADDRESS: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', RPC_URL_BASE: 'https://base.invalid', KEEPERHUB_WALLET_ADDRESS: RECIPIENT });
+    assert.equal(configured.refundsEnabled, true);
+  });
 });

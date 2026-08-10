@@ -14,7 +14,7 @@ KeeperHub distinguishes paid Marketplace calls from owner/manual runs internally
 
 ## Refund recipient
 
-Every paid quote request requires a valid EVM `refundRecipient`. Basis normalizes it to lowercase and includes it in the signed canonical quote. The order callback cannot change it. It may differ from the Marketplace payer because KeeperHub does not expose payer identity to the workflow. Phase 4 stores this field for the next phase but executes no refund.
+Every paid quote request requires a valid EVM `refundRecipient`. Basis normalizes it to lowercase and includes it with the full fixed Base-USDC v1 policy in the signed canonical quote. The order callback cannot change it. It may differ from the Marketplace payer because KeeperHub does not expose payer identity to the workflow. Eligible obligations are created durably; broadcasting remains disabled by default.
 
 ## Asynchronous execution
 
@@ -23,3 +23,9 @@ Atomic quote consumption, order creation, exact intent persistence, and submissi
 ## Execution truth
 
 `SUCCEEDED` still requires exact re-simulation, KeeperHub terminal completion with verified receipts, an independent successful RPC receipt, matching chain/hash/target/calldata/value, and all adapter postconditions. Timeouts and ambiguous evidence enter `UNCERTAIN`; reconciliation polls the original execution and never rebroadcasts from uncertainty.
+
+## Phase 5 refund boundary
+
+Refunds use one internal fixed rail: canonical six-decimal USDC on Base 8453, exact gross amount derived from the authenticated tier, and the HMAC-bound normalized recipient. The public API cannot select or invoke refund transfer parameters. Legacy quotes without the complete `basis-refund-v1-base-usdc` terms are rejected.
+
+Broadcasting defaults disabled. A permanent obligation and exact request exist before network activity; one database uniqueness constraint and deterministic key survive KeeperHub's replay-window expiry. Ambiguous submissions are never automatically rebroadcast. `REFUNDED` requires verified KeeperHub evidence, independent Base RPC success and confirmation, and exactly one matching canonical `Transfer` event from the simulation-resolved sender. See `REFUNDS.md` for eligibility and operations.

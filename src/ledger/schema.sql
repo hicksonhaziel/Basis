@@ -25,6 +25,11 @@ CREATE TABLE IF NOT EXISTS quotes (
   canonicalization_format TEXT NOT NULL,
   signature_format TEXT NOT NULL,
   refund_recipient TEXT NOT NULL,
+  refund_policy_id TEXT NOT NULL,
+  refund_chain_id INTEGER NOT NULL,
+  refund_token_address TEXT NOT NULL,
+  gross_refund_amount_usd TEXT NOT NULL,
+  refund_amount_atomic TEXT NOT NULL,
   signature TEXT NOT NULL,
   issued_at TEXT NOT NULL,
   consumed INTEGER NOT NULL DEFAULT 0,
@@ -61,6 +66,7 @@ CREATE TABLE IF NOT EXISTS order_transitions (
   from_state TEXT NOT NULL,
   to_state TEXT NOT NULL,
   reason TEXT NOT NULL,
+  actor_source TEXT NOT NULL,
   transitioned_at TEXT NOT NULL
 );
 
@@ -117,17 +123,40 @@ CREATE INDEX IF NOT EXISTS idx_receipts_execution ON receipts(execution_id);
 CREATE TABLE IF NOT EXISTS refunds (
   refund_id TEXT PRIMARY KEY,
   order_id TEXT NOT NULL REFERENCES orders(order_id),
-  reason TEXT NOT NULL,
-  amount_usd TEXT NOT NULL,
-  idempotency_key TEXT NOT NULL,
+  quote_id TEXT NOT NULL REFERENCES quotes(quote_id),
+  payment_tier TEXT NOT NULL,
+  gross_payment_usd TEXT NOT NULL,
+  marketplace_fee_usd TEXT NOT NULL,
+  basis_net_revenue_usd TEXT NOT NULL,
+  gross_refund_amount_usd TEXT NOT NULL,
+  amount_atomic TEXT NOT NULL,
+  refund_policy_id TEXT NOT NULL,
+  chain_id INTEGER NOT NULL,
+  token_address TEXT NOT NULL,
+  refund_recipient TEXT NOT NULL,
+  expected_sender TEXT NOT NULL,
+  eligibility_reason TEXT NOT NULL,
+  eligibility_detail TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  outbound_request_json TEXT NOT NULL,
+  state TEXT NOT NULL DEFAULT 'REFUND_PENDING',
   keeperhub_execution_id TEXT,
   transaction_hash TEXT,
-  state TEXT NOT NULL DEFAULT 'PENDING',
+  independent_receipt_block_number TEXT,
+  gas_used TEXT,
+  decoded_transfer_json TEXT,
+  refund_gas_cost_usd TEXT,
+  realized_pnl_usd TEXT NOT NULL,
   created_at TEXT NOT NULL,
-  completed_at TEXT
+  updated_at TEXT NOT NULL,
+  verified_at TEXT,
+  uncertainty_reason TEXT,
+  error_reason TEXT,
+  UNIQUE(order_id, refund_policy_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_refunds_order ON refunds(order_id);
+CREATE INDEX IF NOT EXISTS idx_refunds_state ON refunds(state);
 
 -- ─── Fee Samples ───────────────────────────────────────────────────────────
 

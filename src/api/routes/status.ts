@@ -43,6 +43,10 @@ export function registerStatusRoutes(
       'SELECT transaction_hash,chain_id,keeperhub_verified,independent_verified,receipt_status,block_number,gas_used,verified_at,verification_source FROM receipts WHERE execution_id=? ORDER BY id DESC LIMIT 1',
     ).get(execution.execution_id) as Record<string, unknown> | undefined : undefined;
 
+    const refund = db.prepare(
+      'SELECT refund_policy_id,gross_refund_amount_usd,chain_id,token_address,refund_recipient,eligibility_reason,state,transaction_hash,verified_at FROM refunds WHERE order_id=?',
+    ).get(id) as Record<string, unknown> | undefined;
+
     return reply.status(200).send({
       orderId: order.order_id,
       quoteId: order.quote_id,
@@ -51,7 +55,6 @@ export function registerStatusRoutes(
       callbackAuthKind: order.callback_auth_kind,
       marketplaceTier: order.marketplace_tier,
       settlementMetadataStatus: order.settlement_metadata_status,
-      refundRecipient: order.refund_recipient,
       paymentAmountUsd: order.payment_amount_usd,
       createdAt: order.created_at,
       updatedAt: order.updated_at,
@@ -76,6 +79,16 @@ export function registerStatusRoutes(
         verifiedAt: receipt.verified_at,
         source: receipt.verification_source,
       } : null,
+      refundEligible: Boolean(refund),
+      refundReason: refund?.eligibility_reason ?? null,
+      refundState: refund?.state ?? null,
+      refundPolicyId: refund?.refund_policy_id ?? null,
+      refundAmountUsd: refund?.gross_refund_amount_usd ?? null,
+      refundChainId: refund?.chain_id ?? null,
+      refundToken: refund?.token_address ?? null,
+      refundRecipient: refund?.refund_recipient ?? order.refund_recipient,
+      refundTransactionHash: refund?.verified_at ? refund.transaction_hash : null,
+      refundExplorerLink: refund?.verified_at && refund.transaction_hash ? `https://basescan.org/tx/${refund.transaction_hash}` : null,
     });
   });
 }

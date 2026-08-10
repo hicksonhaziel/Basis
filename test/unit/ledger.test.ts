@@ -182,7 +182,6 @@ describe('ledger/database', () => {
       orderId: 'o_test1',
       quoteId: 'q_order_test',
       state: 'PAID',
-      paymentTxHash: '0xdeadbeef',
       paymentAmountUsd: '0.05',
     });
 

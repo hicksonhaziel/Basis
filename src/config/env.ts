@@ -1,5 +1,7 @@
 /** Fail-closed runtime configuration for Basis. */
 
+import { REFUND_POLICY_ID, REFUND_TOKEN_ADDRESS } from './policy.ts';
+
 export interface Erc20TransferAllowance {
   chainId: number;
   token: `0x${string}`;
@@ -25,6 +27,10 @@ export interface BasisEnv {
   oracleReference?: { priceUsd: string; updatedAt: number };
   allowTestFxFallback: boolean;
   testFxFallbackUsd?: string;
+  refundsEnabled: boolean;
+  refundPolicyId: typeof REFUND_POLICY_ID;
+  refundWallet?: `0x${string}`;
+  refundMinimumConfirmations: number;
 }
 
 const ADDRESS = /^0x[a-fA-F0-9]{40}$/;
@@ -101,6 +107,17 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): BasisEnv {
   if (environment === 'production' && allowTestFxFallback) throw new Error('Production cannot enable test FX fallback');
   const testFxFallbackUsd = source['TEST_FX_FALLBACK_USD'];
   if (allowTestFxFallback && (!testFxFallbackUsd || !/^\d+(\.\d+)?$/.test(testFxFallbackUsd))) throw new Error('Explicit test FX fallback requires TEST_FX_FALLBACK_USD');
+  const refundsEnabled = source['BASIS_REFUNDS_ENABLED'] === 'true';
+  let refundWallet: `0x${string}` | undefined;
+  if (refundsEnabled) {
+    if (source['BASIS_REFUND_POLICY_ID'] !== REFUND_POLICY_ID) throw new Error(`BASIS_REFUND_POLICY_ID must equal ${REFUND_POLICY_ID}`);
+    if (source['BASE_USDC_ADDRESS']?.toLowerCase() !== REFUND_TOKEN_ADDRESS) throw new Error('BASE_USDC_ADDRESS must match canonical Base USDC policy');
+    if (!source['RPC_URL_BASE']) throw new Error('Refund broadcasting requires explicit RPC_URL_BASE for independent verification');
+    const wallet = source['KEEPERHUB_WALLET_ADDRESS'];
+    if (!wallet || !ADDRESS.test(wallet)) throw new Error('Refund broadcasting requires valid KEEPERHUB_WALLET_ADDRESS');
+    refundWallet = wallet.toLowerCase() as `0x${string}`;
+  }
+  const refundMinimumConfirmations = positiveInteger('BASIS_REFUND_MIN_CONFIRMATIONS', '1');
 
   return {
     keeperHubApiKey: required('KEEPERHUB_API_KEY'),
@@ -120,5 +137,9 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): BasisEnv {
     oracleReference,
     allowTestFxFallback,
     testFxFallbackUsd,
+    refundsEnabled,
+    refundPolicyId: REFUND_POLICY_ID,
+    refundWallet,
+    refundMinimumConfirmations,
   };
 }

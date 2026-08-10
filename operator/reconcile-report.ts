@@ -17,6 +17,10 @@ export function buildReconciliationReport(path: string): Record<string, unknown>
   const uncertain = transitions.filter((event) => event.payload.to === 'UNCERTAIN').length;
   const succeeded = transitions.filter((event) => event.payload.to === 'SUCCEEDED').length;
   const failed = transitions.filter((event) => event.payload.to === 'FAILED').length;
+  const latest = new Map<string, string>();
+  for (const event of transitions) latest.set(event.entityId, String(event.payload.to));
+  const pendingRefunds = [...latest.values()].filter((state) => state === 'REFUND_PENDING').length;
+  const uncertainRefunds = [...latest.values()].filter((state) => state === 'REFUND_UNCERTAIN').length;
   const audit = verifyAuditChain(path);
   return {
     generatedAt: new Date().toISOString(),
@@ -25,11 +29,13 @@ export function buildReconciliationReport(path: string): Record<string, unknown>
     deterministic: true,
     eventCount: events.length,
     counts,
-    lifecycle: { succeeded, failed, uncertain },
+    lifecycle: { succeeded, failed, uncertain, pendingRefunds, uncertainRefunds },
     audit,
     alerts: [
       ...(!audit.valid ? [{ code: 'AUDIT_CHAIN_BROKEN', detail: audit.error }] : []),
       ...(uncertain > 0 ? [{ code: 'UNCERTAIN_EXECUTIONS', count: uncertain }] : []),
+      ...(pendingRefunds > 0 ? [{ code: 'REFUNDS_AWAITING_OPERATOR_ENABLEMENT', count: pendingRefunds }] : []),
+      ...(uncertainRefunds > 0 ? [{ code: 'REFUND_UNCERTAIN_RECONCILE_ORIGINAL_ONLY', count: uncertainRefunds }] : []),
     ],
   };
 }

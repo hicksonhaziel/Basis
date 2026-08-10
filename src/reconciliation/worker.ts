@@ -9,19 +9,25 @@ import { assertSimulationMatchesIntent } from '../executor/intent.ts';
 import type { IndependentRpc } from '../executor/verify.ts';
 import { verifyExecution, VerificationFailure, VerificationUncertain } from '../executor/verify.ts';
 
+import { RefundEngine } from '../executor/refund.ts';
+
 export class ReconciliationWorker {
   private readonly ledger: Ledger;
   private readonly keeperHub: KeeperHubClient;
   private readonly rpcClientFactory: (chainId: number) => PublicClient;
 
-  constructor(ledger: Ledger, keeperHub: KeeperHubClient, rpcClientFactory: (chainId: number) => PublicClient) {
+  private readonly refundEngine?: RefundEngine;
+
+  constructor(ledger: Ledger, keeperHub: KeeperHubClient, rpcClientFactory: (chainId: number) => PublicClient, refundEngine?: RefundEngine) {
     this.ledger = ledger;
     this.keeperHub = keeperHub;
     this.rpcClientFactory = rpcClientFactory;
+    this.refundEngine = refundEngine;
   }
 
   async runOnce(includeCrashRecovery = true): Promise<void> {
     for (const execution of this.ledger.getRecoverableExecutions(includeCrashRecovery)) await this.reconcile(execution);
+    await this.refundEngine?.reconcileAll();
   }
 
   async reconcile(execution: ExecutionRecord): Promise<void> {
@@ -43,7 +49,7 @@ export class ReconciliationWorker {
         this.ledger.transitionOrder(execution.order_id, 'EXECUTING', 'startup recovery exact re-simulation matched persisted intent');
         execution.state = 'EXECUTING';
       } catch (error) {
-        this.ledger.transitionOrder(execution.order_id, 'REFUND_PENDING', `startup recovery re-simulation rejected: ${error instanceof Error ? error.message : String(error)}; refund disabled`);
+        this.eligibleIfPaid(execution.order_id, 'RESIMULATION_FAILED', `startup recovery re-simulation rejected before broadcast: ${error instanceof Error ? error.message : String(error)}`);
         return;
       }
     }
@@ -81,11 +87,11 @@ export class ReconciliationWorker {
       const verified = await verifyExecution(status, intent, adapter, params, this.rpcClientFactory(intent.chainId) as unknown as IndependentRpc);
       this.ledger.recordReceipt({ executionId: execution.execution_id, transactionHash: verified.transactionHash, chainId: intent.chainId, keeperHubVerified: true, independentVerified: true, receiptStatus: 'success', blockNumber: verified.blockNumber, gasUsed: verified.gasUsed, decodedLogs: verified.decodedLogs, postconditions: verified.postconditions });
       this.ledger.updateExecution(execution.execution_id, { transactionHash: verified.transactionHash, gasUsed: verified.gasUsed.toString(), gasUsedWei: status.gasUsedWei, sponsored: status.sponsored, completedAt: status.completedAt ?? new Date().toISOString() });
-      const late = new Date(status.completedAt ?? Date.now()).getTime() > new Date(intent.deadlineAt).getTime();
+      const late = this.deadlineBacked(execution.order_id) && new Date(status.completedAt ?? Date.now()).getTime() > new Date(intent.deadlineAt).getTime();
       if (late) {
         this.ledger.transitionOrder(execution.order_id, 'LATE', 'reconciliation verified success after deadline');
         this.ledger.appendEvent('EXECUTION_VERIFIED', execution.execution_id, { transactionHash: verified.transactionHash, verificationSource: 'keeperhub+independent-rpc', deadlineHit: false });
-        this.ledger.transitionOrder(execution.order_id, 'REFUND_PENDING', 'deadline missed; refund execution disabled in this phase');
+        this.eligibleIfPaid(execution.order_id, 'CONTRACTUAL_DEADLINE_MISSED', 'reconciliation independently verified success after contractual deadline');
       } else {
         this.ledger.transitionOrder(execution.order_id, 'SUCCEEDED', 'reconciliation independently verified receipt and adapter postconditions');
         this.ledger.appendEvent('EXECUTION_VERIFIED', execution.execution_id, { transactionHash: verified.transactionHash, verificationSource: 'keeperhub+independent-rpc', deadlineHit: true });
@@ -101,6 +107,16 @@ export class ReconciliationWorker {
 
   private fail(orderId: string, reason: string): void {
     this.ledger.transitionOrder(orderId, 'FAILED', reason);
-    this.ledger.transitionOrder(orderId, 'REFUND_PENDING', 'deterministically verified failure; refund execution disabled in this phase');
+    this.eligibleIfPaid(orderId, 'DEFINITIVE_EXECUTION_FAILURE', reason);
+  }
+
+  private eligibleIfPaid(orderId: string, reason: string, detail: string): void {
+    const row = this.ledger.getDb().prepare('SELECT authority_kind FROM orders WHERE order_id=?').get(orderId) as { authority_kind: string } | undefined;
+    if (row?.authority_kind === 'MARKETPLACE_PAYMENT_AUTHORIZED') this.ledger.markRefundEligible(orderId, reason, detail);
+  }
+
+  private deadlineBacked(orderId: string): boolean {
+    const row = this.ledger.getDb().prepare('SELECT q.deadline_tier FROM orders o JOIN quotes q ON q.quote_id=o.quote_id WHERE o.order_id=?').get(orderId) as { deadline_tier: string } | undefined;
+    return row?.deadline_tier !== 'best-effort';
   }
 }

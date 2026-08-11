@@ -10,6 +10,7 @@ import { registry } from '../adapters/registry.ts';
 import { createErc20TransferAdapter } from '../adapters/erc20-transfer.ts';
 import { wethWrapAdapter } from '../adapters/weth-wrap.ts';
 import { wethUnwrapAdapter } from '../adapters/weth-unwrap.ts';
+import { morphoAccrueInterestAdapter } from '../adapters/morpho-accrue-interest.ts';
 import { KeeperHubClient } from '../keeperhub/client.ts';
 import { Ledger } from '../ledger/database.ts';
 import { BasisExecutor } from '../executor/execute.ts';
@@ -33,6 +34,7 @@ async function main(): Promise<void> {
   }
   registry.register(wethWrapAdapter);
   registry.register(wethUnwrapAdapter);
+  registry.register(morphoAccrueInterestAdapter);
 
   // Create infrastructure
   const keeperHubClient = new KeeperHubClient({

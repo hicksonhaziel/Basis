@@ -55,6 +55,8 @@ export class BasisExecutor {
     const adapter = registry.require(jobType);
     if (!adapter.meta.supportedChains.includes(chainId)) throw new Error(`Adapter ${jobType} does not support chain ${chainId}`);
     const validatedParams = adapter.validateParams(params, chainId);
+    const rpcClient = this.createRpc(chainId);
+    await adapter.quotePreflight?.(validatedParams, rpcClient);
     const executorAddress = await this.keeperHubClient.getOrgWalletAddress(chainId);
     const simulationRequest = adapter.buildSimulation(validatedParams);
     const call = adapter.buildCall(validatedParams, executorAddress);
@@ -64,7 +66,6 @@ export class BasisExecutor {
     const gasEstimate = BigInt(simulation.gasEstimate);
     if (gasEstimate > adapter.meta.maxGasEstimate) throw new Error(`Gas estimate ${gasEstimate} exceeds adapter max ${adapter.meta.maxGasEstimate} for ${jobType}`);
 
-    const rpcClient = this.createRpc(chainId);
     const feeHistory = await collectFeeHistory(rpcClient);
     const reference = this.config.oracleReference;
     const maxStaleness = this.config.oracleMaxStalenessSeconds ?? 3600;
@@ -163,7 +164,15 @@ export class BasisExecutor {
       return { executionId, orderId, status: 'REFUND_PENDING', sponsored: false, error: message };
     }
 
-    this.ledger.transitionOrder(orderId, 'EXECUTING', 'exact re-simulation matched signed canonical intent');
+    try {
+      await adapter.preSubmitPreflight?.(params, this.createRpc(quote.chainId));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.markEligibleOrFail(orderId, authorityKind, 'PRE_SUBMIT_PREFLIGHT_FAILED', `pre-submit policy rejected before broadcast: ${message}`);
+      return { executionId, orderId, status: 'REFUND_PENDING', sponsored: false, error: message };
+    }
+
+    this.ledger.transitionOrder(orderId, 'EXECUTING', 'exact re-simulation and adapter pre-submit policy matched signed canonical intent');
     let keeperhubExecutionId: string;
     let idempotentReplay = false;
     try {

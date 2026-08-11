@@ -43,4 +43,11 @@ describe('KeeperHub Marketplace workflow definitions', () => {
     const serialized = JSON.stringify(publicContract);
     for (const secret of ['t1-secret', 'Bearer', 'Authorization', 'BASIS_ORDER_T1_SECRET']) assert.equal(serialized.includes(secret), false);
   });
+  it('adds Morpho only to the existing quote wrapper and creates no seventh workflow', () => {
+    assert.equal(BASIS_MARKETPLACE_WORKFLOWS.length, 6);
+    const quote = BASIS_MARKETPLACE_WORKFLOWS.find((item) => item.slug === 'basis-quote')!;
+    const jobTypes = ((quote.inputSchema.properties as Record<string, any>).jobType.enum as string[]);
+    assert.ok(jobTypes.includes('morpho.accrue_interest'));
+    for (const definition of BASIS_MARKETPLACE_WORKFLOWS.filter((item) => item.slug.startsWith('basis-order-'))) assert.deepEqual(definition.inputSchema, PAID_ORDER_INPUT_SCHEMA);
+  });
 });

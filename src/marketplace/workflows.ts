@@ -18,7 +18,7 @@ const quoteInput = {
   type: 'object',
   required: ['jobType', 'params', 'chainId', 'deadlineTier', 'refundRecipient'],
   properties: {
-    jobType: { type: 'string', enum: ['weth.wrap', 'weth.unwrap', 'erc20.transfer'] },
+    jobType: { type: 'string', enum: ['weth.wrap', 'weth.unwrap', 'erc20.transfer', 'morpho.accrue_interest'] },
     params: { type: 'object', description: 'Structured parameters validated by the selected Basis adapter' },
     chainId: { type: 'integer' },
     deadlineTier: { type: 'string', enum: ['next-block', '5m', '1h', 'best-effort'] },

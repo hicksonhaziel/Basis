@@ -19,14 +19,18 @@ const EXECUTOR = '0x2222222222222222222222222222222222222222' as const;
 const HASH = `0x${'a'.repeat(64)}` as const;
 const OTHER_HASH = `0x${'b'.repeat(64)}` as const;
 const cleanups: Array<() => void> = [];
-afterEach(() => { while (cleanups.length) cleanups.pop()!(); });
+afterEach(() => { preSubmitCalls = 0; while (cleanups.length) cleanups.pop()!(); });
 
-const adapter: JobAdapter<{ failPostcondition?: boolean }> = {
+interface LifecycleParams { failPostcondition?: boolean; failPreflight?: boolean; }
+let preSubmitCalls = 0;
+
+const adapter: JobAdapter<LifecycleParams> = {
   meta: { jobType: 'test.lifecycle', version: '1.0.0', description: 'Lifecycle fixture', mode: 'permissionless', maxGasEstimate: 100_000n, sendsNativeValue: false, supportedChains: [8453] },
-  validateParams(raw) { return raw as { failPostcondition?: boolean }; },
+  validateParams(raw) { return raw as LifecycleParams; },
   buildCall(_params, from) { return { to: TARGET, data: '0x1234', value: 0n, from }; },
   buildSimulation() { return { contractAddress: TARGET, functionName: 'execute', functionArgs: '["7"]', abi: '[]' }; },
   canonicalIntent(_params, chainId, bucket) { return { fields: [], canonical: `test.lifecycle|${chainId}|${bucket}` }; },
+  async preSubmitPreflight(params) { preSubmitCalls++; if (params.failPreflight) throw new Error('fixture preflight rejected'); },
   verifyPostconditions(params) { return [{ passed: !params.failPostcondition, check: 'fixture postcondition' }]; },
   describe() { return 'fixture'; },
 };
@@ -41,7 +45,7 @@ function makeLedger(): Ledger {
   return ledger;
 }
 
-function makeQuote(ledger: Ledger, params: { failPostcondition?: boolean } = {}): Quote {
+function makeQuote(ledger: Ledger, params: LifecycleParams = {}): Quote {
   const now = Date.now();
   const deadline = new Date(now + 300_000);
   const quote = generateQuote({
@@ -70,7 +74,7 @@ function rpc(overrides: Record<string, unknown> = {}): PublicClient {
   } as unknown as PublicClient;
 }
 
-async function executeScenario(options: { sim?: () => Promise<SimulationSuccess>; send?: () => Promise<any>; poll?: () => Promise<ExecutionStatus>; rpc?: PublicClient; params?: { failPostcondition?: boolean } } = {}) {
+async function executeScenario(options: { sim?: () => Promise<SimulationSuccess>; send?: () => Promise<any>; poll?: () => Promise<ExecutionStatus>; rpc?: PublicClient; params?: LifecycleParams } = {}) {
   const ledger = makeLedger(); const quote = makeQuote(ledger, options.params);
   let sends = 0;
   const keeper = {
@@ -111,7 +115,12 @@ describe('deterministic execution lifecycle', () => {
   });
   it('re-simulation failure goes to REFUND_PENDING without submission', async () => {
     const { result, sends } = await executeScenario({ sim: async () => { throw new Error('reverted'); } });
-    assert.equal(result.status, 'REFUND_PENDING'); assert.equal(sends(), 0);
+    assert.equal(result.status, 'REFUND_PENDING'); assert.equal(sends(), 0); assert.equal(preSubmitCalls, 0);
+  });
+  it('runs pre-submit preflight after re-simulation and before submission', async () => {
+    const { result, sends } = await executeScenario({ params: { failPreflight: true } });
+    assert.equal(result.status, 'REFUND_PENDING'); assert.match(result.error!, /fixture preflight rejected/);
+    assert.equal(preSubmitCalls, 1); assert.equal(sends(), 0);
   });
   it('rejects re-simulation target mismatch', async () => {
     const { result, sends } = await executeScenario({ sim: async () => simulation({ to: OTHER_HASH.slice(0, 42) as `0x${string}` }) });
@@ -122,8 +131,14 @@ describe('deterministic execution lifecycle', () => {
     const { result, sends } = await executeScenario({ sim: async () => simulation({ value: '1' }) });
     assert.equal(result.status, 'REFUND_PENDING'); assert.match(result.error!, /value mismatch/); assert.equal(sends(), 0);
   });
+  it('accepts gas at the adapter cap and rejects gas above it before submission', async () => {
+    const atCap = await executeScenario({ sim: async () => simulation({ gasEstimate: '100000' }) });
+    assert.equal(atCap.result.status, 'SUCCEEDED'); assert.equal(atCap.sends(), 1);
+    const aboveCap = await executeScenario({ sim: async () => simulation({ gasEstimate: '100001' }) });
+    assert.equal(aboveCap.result.status, 'REFUND_PENDING'); assert.match(aboveCap.result.error!, /exceeds adapter max/); assert.equal(aboveCap.sends(), 0);
+  });
 
-  const verificationCases: Array<[string, Partial<ExecutionStatus>, PublicClient | undefined, { failPostcondition?: boolean } | undefined, RegExp]> = [
+  const verificationCases: Array<[string, Partial<ExecutionStatus>, PublicClient | undefined, LifecycleParams | undefined, RegExp]> = [
     ['no receipts', { receipts: [] }, undefined, undefined, /no applicable receipts/],
     ['unverified receipt', { receipts: [{ ...status().receipts[0]!, verified: false }] }, undefined, undefined, /not verified/],
     ['failed receipt', { receipts: [{ ...status().receipts[0]!, receiptStatus: 'reverted' }] }, undefined, undefined, /not successful/],
@@ -189,7 +204,7 @@ describe('atomicity and restart reconciliation', () => {
       getExecutionStatus: async () => ({ status: status({ executionId: 'kh_admitted' }), pollIntervalHint: 0 }),
     } as never, () => rpc());
     await worker.runOnce(true);
-    assert.equal(simulations, 1); assert.equal(sends, 1);
+    assert.equal(simulations, 1); assert.equal(sends, 1); assert.equal(preSubmitCalls, 0);
     assert.equal((ledger.getDb().prepare("SELECT state FROM orders WHERE order_id='o_admitted'").get() as any).state, 'SUCCEEDED');
   });
 

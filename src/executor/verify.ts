@@ -1,5 +1,5 @@
 import { decodeEventLog, type Hex } from 'viem';
-import type { JobAdapter, DecodedLog, PostconditionCheck } from '../adapters/adapter.ts';
+import type { JobAdapter, DecodedLog, PostconditionCheck, AdapterRpc } from '../adapters/adapter.ts';
 import type { CanonicalExecutionIntent } from './intent.ts';
 import type { ExecutionStatus } from '../keeperhub/client.ts';
 import { toJsonValue } from './intent.ts';
@@ -7,7 +7,7 @@ import { toJsonValue } from './intent.ts';
 export class VerificationFailure extends Error {}
 export class VerificationUncertain extends Error {}
 
-export interface IndependentRpc {
+export interface IndependentRpc extends AdapterRpc {
   getTransactionReceipt(input: { hash: Hex }): Promise<{ transactionHash: Hex; status: 'success' | 'reverted'; blockNumber: bigint; gasUsed: bigint; logs: Array<{ address: Hex; data: Hex; topics: readonly Hex[] }> }>;
   getTransaction(input: { hash: Hex }): Promise<{ hash: Hex; from: Hex; to: Hex | null; input: Hex; value: bigint }>;
 }
@@ -25,7 +25,7 @@ function decodeLogs(logs: Array<{ address: Hex; data: Hex; topics: readonly Hex[
   const decoded: DecodedLog[] = [];
   for (const log of logs) {
     try {
-      const event = decodeEventLog({ abi: abi as never, data: log.data, topics: log.topics as never, strict: false });
+      const event = decodeEventLog({ abi: abi as never, data: log.data, topics: log.topics as never, strict: true });
       decoded.push({ address: log.address, eventName: String(event.eventName), args: toJsonValue(event.args) as Record<string, unknown> });
     } catch { /* Unrelated logs are not postcondition evidence. */ }
   }
@@ -67,13 +67,19 @@ export async function verifyExecution(
   }
 
   const decodedLogs = decodeLogs(receipt.logs, intent.abi);
-  const postconditions = adapter.verifyPostconditions(validatedParams, {
+  const adapterReceipt = {
     executorAddress: intent.executorAddress,
     transactionHash: status.transactionHash as Hex,
-    status: 'success',
+    status: 'success' as const,
+    blockNumber: receipt.blockNumber,
     gasUsed: receipt.gasUsed,
+    rawLogs: receipt.logs,
     logs: decodedLogs,
-  });
+  };
+  const postconditions = adapter.verifyPostconditions(validatedParams, adapterReceipt);
+  if (adapter.verifyHistoricalReceipt) {
+    postconditions.push(...await adapter.verifyHistoricalReceipt(validatedParams, adapterReceipt, rpc, { sponsored: status.sponsored }));
+  }
   if (postconditions.length === 0 || postconditions.some((check) => !check.passed)) throw new VerificationFailure('Adapter postcondition verification failed');
   return { transactionHash: status.transactionHash as Hex, blockNumber: receipt.blockNumber, gasUsed: receipt.gasUsed, decodedLogs, postconditions };
 }

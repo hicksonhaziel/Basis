@@ -66,6 +66,18 @@ export interface PostconditionCheck {
   detail?: string;
 }
 
+export interface AdapterRpc {
+  getChainId(): Promise<number>;
+  getBytecode(input: { address: `0x${string}`; blockNumber?: bigint }): Promise<`0x${string}` | undefined>;
+  getBlock(input?: { blockNumber?: bigint }): Promise<{ number: bigint; timestamp: bigint }>;
+  readContract(input: Record<string, unknown>): Promise<unknown>;
+}
+
+export interface HistoricalVerificationContext {
+  /** True when KeeperHub submitted through an outer smart-account transaction. */
+  sponsored: boolean;
+}
+
 export interface JobAdapter<TParams = unknown> {
   /** Adapter metadata and safety properties */
   meta: AdapterMeta;
@@ -106,6 +118,20 @@ export interface JobAdapter<TParams = unknown> {
     receipt: PostconditionReceipt,
   ): PostconditionCheck[];
 
+  /** Quote-time immutable deployment and time-sensitive eligibility checks. */
+  quotePreflight?(params: TParams, rpc: AdapterRpc): Promise<void>;
+
+  /** Final time-sensitive check, called after exact re-simulation and immediately before submission. */
+  preSubmitPreflight?(params: TParams, rpc: AdapterRpc): Promise<void>;
+
+  /** Optional historical receipt-block proof, including sponsored inner-action verification. */
+  verifyHistoricalReceipt?(
+    params: TParams,
+    receipt: PostconditionReceipt,
+    rpc: AdapterRpc,
+    context: HistoricalVerificationContext,
+  ): Promise<PostconditionCheck[]>;
+
   /**
    * Human-readable summary of the job for display/logging.
    */
@@ -119,8 +145,12 @@ export interface PostconditionReceipt {
   transactionHash: `0x${string}`;
   /** Whether the transaction succeeded */
   status: 'success' | 'reverted';
+  /** Receipt block used for historical state verification. */
+  blockNumber: bigint;
   /** Gas used */
   gasUsed: bigint;
+  /** Raw receipt logs used to count exact contract emissions. */
+  rawLogs: Array<{ address: `0x${string}`; data: `0x${string}`; topics: readonly `0x${string}`[] }>;
   /** Decoded logs relevant to this adapter */
   logs: DecodedLog[];
 }

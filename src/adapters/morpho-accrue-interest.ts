@@ -167,7 +167,7 @@ export const morphoAccrueInterestAdapter: JobAdapter<MorphoAccrueInterestParams>
     return { to: MORPHO_ADDRESS, data, value: 0n, from: executorAddress };
   },
   buildSimulation(): SimulationParams {
-    return { contractAddress: MORPHO_ADDRESS, functionName: 'accrueInterest', functionArgs: JSON.stringify([paramsTuple().map(String)]), abi: JSON.stringify(MORPHO_ACCRUE_INTEREST_ABI) };
+    return { contractAddress: MORPHO_ADDRESS, functionName: 'accrueInterest', functionArgs: JSON.stringify([{ ...MORPHO_MARKET_PARAMS, lltv: MORPHO_MARKET_PARAMS.lltv.toString() }]), abi: JSON.stringify(MORPHO_ACCRUE_INTEREST_ABI) };
   },
   canonicalIntent(_params, chainId, bucket): CanonicalFields {
     const canonical = [`${meta.jobType}@${meta.version}`, chainId, MORPHO_ADDRESS.toLowerCase(), MORPHO_SELECTOR, MORPHO_MARKET_ID,

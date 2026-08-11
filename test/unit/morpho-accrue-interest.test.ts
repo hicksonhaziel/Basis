@@ -62,7 +62,8 @@ describe('morpho.accrue_interest strict adapter policy', () => {
     assert.equal(decoded.functionName, 'accrueInterest'); assert.deepEqual(decoded.args?.[0], MORPHO_MARKET_PARAMS);
     const simulation = morphoAccrueInterestAdapter.buildSimulation(normalizedParams());
     assert.equal(simulation.contractAddress, MORPHO_ADDRESS); assert.equal(simulation.value, undefined);
-    assert.equal(JSON.parse(simulation.functionArgs!)[0][4], MORPHO_MARKET_PARAMS.lltv.toString());
+    assert.equal(JSON.parse(simulation.functionArgs!)[0].loanToken, MORPHO_MARKET_PARAMS.loanToken);
+    assert.equal(JSON.parse(simulation.functionArgs!)[0].lltv, MORPHO_MARKET_PARAMS.lltv.toString());
   });
 
   it('binds a deterministic complete canonical intent and exact gas cap', () => {

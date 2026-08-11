@@ -13,7 +13,6 @@ ENV NODE_ENV=production \
 
 RUN mkdir -p /data && chown -R node:node /app /data
 USER node
-VOLUME ["/data"]
 EXPOSE 3000
 
 CMD ["node", "--experimental-strip-types", "src/api/server.ts"]

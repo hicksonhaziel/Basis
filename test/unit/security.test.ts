@@ -139,6 +139,8 @@ describe('adapter safety policies', () => {
     assert.throws(() => wethWrapAdapter.validateParams({ weth: TOKEN, amount: '1' }, 8453), /caller-selected/);
     assert.throws(() => wethWrapAdapter.validateParams({ amount: (MAX_WETH_AMOUNT_WEI + 1n).toString() }, 8453), /exceeds maximum/);
     assert.equal(wethWrapAdapter.validateParams({ amount: MAX_WETH_AMOUNT_WEI.toString() }, 8453).weth.toLowerCase(), WETH_ADDRESSES[8453]!.toLowerCase());
+    assert.equal(wethWrapAdapter.validatePersistedParams!({ chainId: 84532, weth: WETH_ADDRESSES[84532], amount: '1' }, 84532).amount, 1n);
+    assert.throws(() => wethWrapAdapter.validatePersistedParams!({ chainId: 84532, weth: TOKEN, amount: '1' }, 84532), /policy fields mismatch/);
   });
   it('formats wei without JavaScript Number precision loss', () => assert.equal(weiToEtherString(9_007_199_254_740_993n), '0.009007199254740993'));
   it('enforces exact ERC-20 allowlist policy', () => {

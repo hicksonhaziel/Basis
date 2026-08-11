@@ -134,7 +134,9 @@ export class BasisExecutor {
     if (isQuoteExpired(quote)) throw new Error(`Quote expired at ${quote.expiresAt}`);
     this.assertQuoteIntent(quote);
     const adapter = registry.require(quote.jobType);
-    const params = adapter.validateParams(quote.intent.validatedParams, quote.chainId);
+    const params = adapter.validatePersistedParams
+      ? adapter.validatePersistedParams(quote.intent.validatedParams, quote.chainId)
+      : adapter.validateParams(quote.intent.validatedParams, quote.chainId);
     const rebuiltCall = adapter.buildCall(params, quote.intent.executorAddress);
     const rebuiltSimulation = adapter.buildSimulation(params);
     if (rebuiltCall.to.toLowerCase() !== quote.intent.target.toLowerCase() || rebuiltCall.data.toLowerCase() !== quote.intent.calldata.toLowerCase() || rebuiltCall.value.toString() !== quote.intent.nativeValueWei) throw new Error('Adapter call differs from signed canonical intent');

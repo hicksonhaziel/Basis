@@ -82,7 +82,9 @@ export class ReconciliationWorker {
 
     if (execution.state === 'EXECUTING' || execution.state === 'UNCERTAIN') this.ledger.transitionOrder(execution.order_id, 'VERIFYING', 'reconciliation obtained terminal KeeperHub status');
     const adapter = registry.require(intent.adapterName);
-    const params = adapter.validateParams(intent.validatedParams, intent.chainId);
+    const params = adapter.validatePersistedParams
+      ? adapter.validatePersistedParams(intent.validatedParams, intent.chainId)
+      : adapter.validateParams(intent.validatedParams, intent.chainId);
     try {
       const verified = await verifyExecution(status, intent, adapter, params, this.rpcClientFactory(intent.chainId) as unknown as IndependentRpc);
       this.ledger.recordReceipt({ executionId: execution.execution_id, transactionHash: verified.transactionHash, chainId: intent.chainId, keeperHubVerified: true, independentVerified: true, receiptStatus: 'success', blockNumber: verified.blockNumber, gasUsed: verified.gasUsed, decodedLogs: verified.decodedLogs, postconditions: verified.postconditions });

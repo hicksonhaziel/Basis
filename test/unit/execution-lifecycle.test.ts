@@ -142,6 +142,11 @@ describe('deterministic execution lifecycle', () => {
     const output = await executeScenario({ rpc: rpc({ getTransactionReceipt: async () => { throw new Error('not found'); } }) });
     assert.equal(output.result.status, 'UNCERTAIN');
   });
+  it('accepts KeeperHub-sponsored smart-account outer routing when independent receipt and adapter postconditions pass', async () => {
+    const routed = rpc({ getTransaction: async () => ({ hash: HASH, from: '0x3333333333333333333333333333333333333333', to: '0x5555555555555555555555555555555555555555', input: '0x9999', value: 0n }) });
+    const output = await executeScenario({ poll: async () => status({ sponsored: true }), rpc: routed });
+    assert.equal(output.result.status, 'SUCCEEDED');
+  });
   it('timeout transitions to UNCERTAIN and reconciliation never rebroadcasts it', async () => {
     const output = await executeScenario({ poll: async () => { throw new KeeperHubError('timeout', 0, {}); } });
     assert.equal(output.result.status, 'UNCERTAIN'); assert.equal(output.sends(), 1);

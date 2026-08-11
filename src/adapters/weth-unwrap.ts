@@ -21,6 +21,12 @@ export const wethUnwrapAdapter: JobAdapter<WethUnwrapParams> = {
     if (amount > MAX_WETH_AMOUNT_WEI) throw new Error(`weth.unwrap: amount exceeds maximum ${MAX_WETH_AMOUNT_WEI}`);
     return { chainId, weth: WETH_ADDRESSES[chainId]!, amount };
   },
+  validatePersistedParams(raw: unknown, chainId: number): WethUnwrapParams {
+    if (!raw || typeof raw !== 'object') throw new Error('weth.unwrap: persisted params must be an object');
+    const p = raw as Record<string, unknown>; const pinned = WETH_ADDRESSES[chainId];
+    if (!pinned || typeof p.weth !== 'string' || p.weth.toLowerCase() !== pinned.toLowerCase() || p.chainId !== chainId) throw new Error('weth.unwrap: persisted chain-pinned policy fields mismatch');
+    return wethUnwrapAdapter.validateParams({ amount: p.amount }, chainId);
+  },
   buildCall(params, executorAddress): CallParams { return { to: params.weth, data: encodeFunctionData({ abi: ABI, functionName: 'withdraw', args: [params.amount] }), value: 0n, from: executorAddress }; },
   buildSimulation(params): SimulationParams { return { contractAddress: params.weth, functionName: 'withdraw', functionArgs: JSON.stringify([params.amount.toString()]), abi: JSON.stringify(ABI) }; },
   canonicalIntent(params, chainId, bucket): CanonicalFields { return { fields: ['adapterVersion','chainId','weth','functionSelector','recipient','amount','valueWei','deadlineBucket'], canonical: [`weth.unwrap@${meta.version}`,chainId,params.weth.toLowerCase(),'withdraw','',params.amount,'0',bucket].join('|') }; },

@@ -36,6 +36,12 @@ export const wethWrapAdapter: JobAdapter<WethWrapParams> = {
     if (amount > MAX_WETH_AMOUNT_WEI) throw new Error(`weth.wrap: amount exceeds maximum ${MAX_WETH_AMOUNT_WEI}`);
     return { chainId, weth: WETH_ADDRESSES[chainId]!, amount };
   },
+  validatePersistedParams(raw: unknown, chainId: number): WethWrapParams {
+    if (!raw || typeof raw !== 'object') throw new Error('weth.wrap: persisted params must be an object');
+    const p = raw as Record<string, unknown>; const pinned = WETH_ADDRESSES[chainId];
+    if (!pinned || typeof p.weth !== 'string' || p.weth.toLowerCase() !== pinned.toLowerCase() || p.chainId !== chainId) throw new Error('weth.wrap: persisted chain-pinned policy fields mismatch');
+    return wethWrapAdapter.validateParams({ amount: p.amount }, chainId);
+  },
   buildCall(params, executorAddress): CallParams { return { to: params.weth, data: encodeFunctionData({ abi: ABI, functionName: 'deposit' }), value: params.amount, from: executorAddress }; },
   buildSimulation(params): SimulationParams { return { contractAddress: params.weth, functionName: 'deposit', abi: JSON.stringify(ABI), value: weiToEtherString(params.amount) }; },
   canonicalIntent(params, chainId, bucket): CanonicalFields { const canonical = [`weth.wrap@${meta.version}`, chainId, params.weth.toLowerCase(), 'deposit', '', params.amount, params.amount, bucket].join('|'); return { fields: ['adapterVersion','chainId','weth','functionSelector','recipient','amount','valueWei','deadlineBucket'], canonical }; },

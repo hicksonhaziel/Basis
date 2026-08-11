@@ -59,10 +59,12 @@ export async function verifyExecution(
   if (!receipt || !transaction) throw new VerificationUncertain('Independent RPC transaction unavailable');
   if (receipt.transactionHash.toLowerCase() !== txHash || transaction.hash.toLowerCase() !== txHash) throw new VerificationFailure('RPC/KeeperHub transaction hash disagreement');
   if (receipt.status !== 'success') throw new VerificationFailure('Independent RPC receipt status is not successful');
-  if (transaction.from.toLowerCase() !== intent.executorAddress.toLowerCase()) throw new VerificationFailure('Independent transaction executor mismatch');
-  if (transaction.to?.toLowerCase() !== intent.target.toLowerCase()) throw new VerificationFailure('Independent transaction target mismatch');
-  if (transaction.input.toLowerCase() !== intent.calldata.toLowerCase()) throw new VerificationFailure('Independent transaction calldata mismatch');
-  if (transaction.value !== BigInt(intent.nativeValueWei)) throw new VerificationFailure('Independent transaction value mismatch');
+  if (!status.sponsored) {
+    if (transaction.from.toLowerCase() !== intent.executorAddress.toLowerCase()) throw new VerificationFailure('Independent transaction executor mismatch');
+    if (transaction.to?.toLowerCase() !== intent.target.toLowerCase()) throw new VerificationFailure('Independent transaction target mismatch');
+    if (transaction.input.toLowerCase() !== intent.calldata.toLowerCase()) throw new VerificationFailure('Independent transaction calldata mismatch');
+    if (transaction.value !== BigInt(intent.nativeValueWei)) throw new VerificationFailure('Independent transaction value mismatch');
+  }
 
   const decodedLogs = decodeLogs(receipt.logs, intent.abi);
   const postconditions = adapter.verifyPostconditions(validatedParams, {

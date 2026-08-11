@@ -76,6 +76,9 @@ export interface JobAdapter<TParams = unknown> {
    */
   validateParams(raw: unknown, chainId?: number): TParams;
 
+  /** Revalidate normalized fields restored from a verified signed quote. */
+  validatePersistedParams?(raw: unknown, chainId: number): TParams;
+
   /**
    * Build the on-chain call from validated params.
    * This is what gets simulated and executed.

@@ -133,7 +133,8 @@ export function evaluateMorphoAccrualEvent(receipt: PostconditionReceipt): { cou
   const event = events[0];
   let valid = false;
   try {
-    valid = morphoRawLogs.length === 1 && events.length === 1 && !!event
+    valid = morphoRawLogs.length === 1 && morphoRawLogs[0]?.topics[0]?.toLowerCase() === MORPHO_ACCRUE_INTEREST_TOPIC
+      && events.length === 1 && !!event
       && String(event.args.id).toLowerCase() === MORPHO_MARKET_ID
       && BigInt(event.args.prevBorrowRate as string | bigint) > 0n
       && BigInt(event.args.interest as string | bigint) > 0n

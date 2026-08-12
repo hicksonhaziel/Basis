@@ -8,8 +8,12 @@
 
 - Repository: https://github.com/hicksonhaziel/Basis
 - Live dashboard: https://outstanding-motivation-production-c0ff.up.railway.app/
+- Representative KeeperHub execution: https://sepolia.basescan.org/tx/0x34a4070605bf2e813fef81b25d1530798350d8b6ae9a45f183d5c3150e58b474
+- Complete 24-transaction ledger: https://github.com/hicksonhaziel/Basis/blob/main/dashboard/evidence.jsonl
 - Public evidence: https://outstanding-motivation-production-c0ff.up.railway.app/phase7-evidence.json
 - Demo video: to be added after recording
+
+The linked transaction is a sponsored Base Sepolia WETH benchmark executed through KeeperHub Direct Execution. It is not evidence of a paid Marketplace call, Morpho execution, refund, or mainnet execution.
 
 ## Problem
 

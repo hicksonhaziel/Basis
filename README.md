@@ -56,11 +56,22 @@ The Marketplace graph contains no transaction logic. The stateful Basis operator
 
 ## Live surfaces
 
-- **Dashboard and API:** [public evidence console](https://outstanding-motivation-production-c0ff.up.railway.app/)
+- **Dashboard and API:** [live execution dashboard](https://outstanding-motivation-production-c0ff.up.railway.app/)
 - **Health:** [`/health`](https://outstanding-motivation-production-c0ff.up.railway.app/health)
 - **Metrics:** [`/metrics`](https://outstanding-motivation-production-c0ff.up.railway.app/metrics)
 - **Redacted evidence:** [`/phase7-evidence.json`](https://outstanding-motivation-production-c0ff.up.railway.app/phase7-evidence.json)
 - **Source:** [github.com/hicksonhaziel/Basis](https://github.com/hicksonhaziel/Basis)
+
+## Onchain transaction proof
+
+Basis executed 24 sponsored WETH benchmark transactions through KeeperHub Direct Execution on Base Sepolia. These are public execution proofs—not paid Marketplace, Morpho, refund, or mainnet claims.
+
+- **First verified execution:** [`0x9af790…b5d0e`](https://sepolia.basescan.org/tx/0x9af790245434b2c59cc634cef9f443fe8e354335b677be68eccd5192a6eb5d0e)
+- **Representative execution:** [`0x09a39f…82660`](https://sepolia.basescan.org/tx/0x09a39f2b9697cc6f45bec8ca30902218a517766351be92a3a81e8fef3d682660)
+- **Latest committed execution:** [`0x34a407…8b474`](https://sepolia.basescan.org/tx/0x34a4070605bf2e813fef81b25d1530798350d8b6ae9a45f183d5c3150e58b474)
+- **Complete 24-transaction audit ledger:** [`dashboard/evidence.jsonl`](dashboard/evidence.jsonl)
+
+Each hash is paired with a Basis-local execution ID, `sponsored: true`, deadline result and canonical audit hash in the committed ledger. Provider-side KeeperHub execution IDs were not retained, so none are fabricated here.
 
 ## Quickstart
 

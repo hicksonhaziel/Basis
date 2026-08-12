@@ -61,7 +61,7 @@ The repository also does not disclose evidence of:
 
 ## Status labels
 
-Marketplace workflows were submitted for public publication. `UNPAID` and `NOT REFUNDED` remain accurate for the disclosed evidence package. Publication status is not payment status.
+All six Marketplace workflows and their expected input fields are publicly visible. `UNPAID` and `NOT REFUNDED` remain accurate for the disclosed evidence package. Publication status is not payment status.
 
 ## Redaction policy
 

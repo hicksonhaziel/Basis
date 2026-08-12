@@ -71,7 +71,7 @@ Paid order execution remains KeeperHub-hosted so the local MCP cannot bypass pay
 |---|---|
 | Hosted API and dashboard | Live |
 | Local Basis MCP | Implemented |
-| Six Marketplace workflow publications | Publication command completed |
+| Six Marketplace workflows | Publicly visible with expected input fields |
 | Hash-chained benchmark | 24 sponsored Base Sepolia WETH executions / 96 events |
 | Historical pricing report | 1,003 tested observations; Basis-reported |
 | Disclosed Phase 7 Morpho transaction | Not included |
@@ -96,4 +96,4 @@ Basis demonstrates the tier-ladder workaround required by fixed-price Marketplac
 
 ## Limitations
 
-Basis is unaudited hackathon software. KeeperHub does not expose settlement metadata to workflow nodes, dedicated per-workflow MCP input schemas require buyer-path verification, refund broadcasting defaults off, and the committed package lacks the historical Phase 7 Morpho execution record.
+Basis is unaudited hackathon software. KeeperHub does not expose settlement metadata to workflow nodes, a buyer-controlled paid invocation has not been documented, refund broadcasting defaults off, and the committed package lacks the historical Phase 7 Morpho execution record.

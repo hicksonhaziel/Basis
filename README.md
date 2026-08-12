@@ -15,7 +15,7 @@
 Basis turns a structured keeper job into a signed, expiring quote, accepts the matching fixed-price Marketplace tier, re-simulates the exact intent, executes through KeeperHub, and independently verifies the result. Pricing, authorization, recovery, receipt checks, and refunds are deterministic TypeScript rules—no model participates in the execution path.
 
 > [!IMPORTANT]
-> **Truthful public status:** the service and dashboard are live; six KeeperHub Marketplace workflows were submitted for public listing; no paid Marketplace settlement, live refund, mainnet execution, or disclosed Phase 7 Morpho transaction is claimed. The committed benchmark is 24 sponsored Base Sepolia WETH executions and the backtest is a Basis-reported historical result.
+> **Truthful public status:** the service and dashboard are live; all six KeeperHub Marketplace workflows and their expected input fields are publicly visible; no paid Marketplace settlement, live refund, mainnet execution, or disclosed Phase 7 Morpho transaction is claimed. The committed benchmark is 24 sponsored Base Sepolia WETH executions and the backtest is a Basis-reported historical result.
 
 ## Why Basis
 

@@ -18,6 +18,7 @@ import { registerQuoteRoutes } from './routes/quote.ts';
 import { registerOrderRoutes } from './routes/order.ts';
 import { registerStatusRoutes } from './routes/status.ts';
 import { registerMetricsRoutes } from './routes/metrics.ts';
+import { registerDashboardRoutes } from './routes/dashboard.ts';
 import { ReconciliationWorker } from '../reconciliation/worker.ts';
 import { createRpcClient } from '../quoter/fee-history.ts';
 
@@ -96,6 +97,7 @@ async function main(): Promise<void> {
   registerOrderRoutes(app, executor, ledger, env.paidWorkflowCredentials, env.basisSigningKey);
   registerStatusRoutes(app, executor, ledger);
   registerMetricsRoutes(app, executor, ledger);
+  registerDashboardRoutes(app);
 
   // Health check
   app.get('/health', async () => ({ status: 'ok' }));

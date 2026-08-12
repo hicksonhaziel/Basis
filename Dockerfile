@@ -7,6 +7,7 @@ RUN apt-get update \
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 COPY src ./src
+COPY dashboard ./dashboard
 COPY --chmod=0755 docker/basis-entrypoint.sh /usr/local/bin/basis-entrypoint.sh
 
 ENV NODE_ENV=production \

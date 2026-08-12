@@ -1,143 +1,172 @@
-import { verifyAuditEvents } from './audit-chain.mjs';
+import { verifyAuditEvents } from '/audit-chain.mjs';
 
-/**
- * Basis Dashboard — app.mjs
- * Loads evidence data (JSONL audit chain) and populates the open book.
- * Falls back to committed evidence when no live server is available.
- */
+const $ = (id) => document.getElementById(id);
 
-// Try live API first, fallback to static evidence
-async function loadData() {
+function text(id, value) {
+  const element = $(id);
+  if (element) element.textContent = String(value);
+}
+
+function showUnavailable(id, message = 'Not included in redacted package') {
+  const element = $(id);
+  element.replaceChildren();
+  const label = document.createElement('span');
+  label.className = 'unavailable';
+  label.textContent = message;
+  element.append(label);
+}
+
+async function fetchJson(path) {
+  const response = await fetch(path, { headers: { accept: 'application/json' } });
+  if (!response.ok) throw new Error(`${path} returned HTTP ${response.status}`);
+  return response.json();
+}
+
+async function loadAuditEvents() {
+  const response = await fetch('/evidence.jsonl');
+  if (!response.ok) throw new Error(`audit evidence returned HTTP ${response.status}`);
+  const body = await response.text();
+  return body.split('\n').filter(Boolean).map((line) => JSON.parse(line));
+}
+
+function renderStatuses(environment) {
+  const values = [environment.networkClass, environment.workflowVisibility, environment.paymentStatus, environment.refundStatus, environment.publicationStatus];
+  const rail = $('status-rail');
+  rail.replaceChildren(...values.map((value, index) => {
+    const badge = document.createElement('span');
+    badge.className = `badge ${index === 0 ? 'info' : 'warn'}`;
+    badge.textContent = String(value);
+    return badge;
+  }));
+}
+
+function safeExplorerUrl(rawUrl, transactionHash) {
+  if (!/^0x[0-9a-f]{64}$/i.test(transactionHash)) return null;
   try {
-    const res = await fetch('/metrics');
-    if (res.ok) return { source: 'live', metrics: await res.json() };
-  } catch {}
-
-  // Fallback: load committed evidence JSONL
-  try {
-    const res = await fetch('./evidence.jsonl');
-    if (res.ok) {
-      const text = await res.text();
-      return { source: 'static', events: parseJsonl(text) };
-    }
-  } catch {}
-
-  return { source: 'empty', events: [] };
+    const url = new URL(rawUrl);
+    if (url.protocol !== 'https:' || url.hostname !== 'sepolia.basescan.org' || url.pathname.toLowerCase() !== `/tx/${transactionHash.toLowerCase()}`) return null;
+    return url.href;
+  } catch { return null; }
 }
 
-function parseJsonl(text) {
-  return text.trim().split('\n').filter(Boolean).map(line => JSON.parse(line));
+function renderEvidence(evidence) {
+  const { environment, proof, publicChain, keeperHubReported, basisLocal, trustBoundary } = evidence;
+  renderStatuses(environment);
+  text('proof-status', proof.status);
+  text('proof-disclosure', proof.disclosure);
+  text('trust-public', trustBoundary.publicChain);
+  text('trust-keeper', trustBoundary.keeperHub);
+  text('trust-basis', trustBoundary.basis);
+  text('network', `${environment.network} · chain ${environment.chainId}`);
+  text('morpho-address', publicChain.morphoAddress);
+  text('market-id', publicChain.marketId);
+  text('selector', publicChain.functionSelector);
+  text('event-topic', publicChain.accrueInterestTopic0);
+  text('morpho-hash', publicChain.morphoRuntimeCodeHash);
+  text('irm-hash', publicChain.irmRuntimeCodeHash);
+
+  const transactionHash = typeof publicChain.transactionHash === 'string' ? publicChain.transactionHash : '';
+  const explorerUrl = safeExplorerUrl(publicChain.explorerUrl, transactionHash);
+  if (explorerUrl) {
+    const link = document.createElement('a');
+    link.href = explorerUrl;
+    link.target = '_blank';
+    link.rel = 'noreferrer';
+    link.textContent = transactionHash;
+    $('transaction').replaceChildren(link);
+  } else showUnavailable('transaction');
+
+  if (publicChain.blockNumber && publicChain.blockTimestamp) text('block-time', `${publicChain.blockNumber} · ${publicChain.blockTimestamp}`);
+  else showUnavailable('block-time');
+  if (publicChain.event) text('event-proof', `interest ${publicChain.event.interest}; fee shares ${publicChain.event.feeShares}`);
+  else showUnavailable('event-proof');
+  if (publicChain.historicalStateProof) text('historical-proof', publicChain.historicalStateProof);
+  else showUnavailable('historical-proof');
+  if (keeperHubReported.executionId) text('keeperhub-id', `${keeperHubReported.executionId} · KeeperHub-reported`);
+  else showUnavailable('keeperhub-id');
+
+  const ids = [basisLocal.quoteId, basisLocal.orderId, basisLocal.executionId].filter((value) => typeof value === 'string' && value.length > 0);
+  if (ids.length) {
+    const nodes = [];
+    ids.forEach((id, index) => {
+      if (index > 0) nodes.push(document.createElement('br'));
+      nodes.push(document.createTextNode(id));
+    });
+    $('basis-ids').replaceChildren(...nodes);
+  } else showUnavailable('basis-ids');
 }
 
-// Compute metrics from audit events
-function computeMetrics(events) {
-  const quotes = events.filter(e => e.type === 'QUOTE_ISSUED');
-  const orders = events.filter(e => e.type === 'ORDER_CREATED');
-  const settled = events.filter(e => e.type === 'EXECUTION_VERIFIED');
-  const failed = events.filter(e => e.type === 'EXECUTION_FAILED');
-
-  const totalRevenue = orders.reduce((sum, o) => sum + parseFloat(o.payload.priceUsd || '0.01'), 0);
-  const totalExec = settled.length + failed.length;
-  const deadlineHits = settled.filter(e => e.payload.deadlineHit !== false).length;
-
-  return {
-    revenue: totalRevenue,
-    totalExec,
-    settled: settled.length,
-    failed: failed.length,
-    deadlineHits,
-    hitRate: totalExec > 0 ? (deadlineHits / totalExec * 100) : 0,
-    successRate: totalExec > 0 ? (settled.length / totalExec * 100) : 0,
-    chainLength: events.length,
-    lastHash: events.length > 0 ? events[events.length - 1].hash : '0'.repeat(64),
-    orders,
-    settled,
-  };
-}
-
-// Build execution tape rows
-function buildTape(events) {
-  const orders = events.filter(e => e.type === 'ORDER_CREATED');
-  const executions = events.filter(e => e.type === 'EXECUTION_VERIFIED' || e.type === 'EXECUTION_FAILED');
-
-  return orders.map((order, i) => {
-    const exec = executions[i];
-    const isSuccess = exec?.type === 'EXECUTION_VERIFIED';
-    return {
-      orderId: order.entityId?.slice(0, 12) + '...',
-      jobType: order.payload.jobType || 'weth.*',
-      tier: order.payload.deadlineTier || '—',
-      price: '$' + (order.payload.priceUsd || '0.01'),
-      status: isSuccess ? 'SETTLED' : (exec ? 'FAILED' : 'PENDING'),
-      tx: exec?.payload?.transactionHash?.slice(0, 14) + '...' || '—',
-      gas: exec?.payload?.gasUsedWei || '—',
-    };
+function renderBacktest(report) {
+  text('backtest-class', report.classification);
+  text('backtest-source', `${report.provenance} · ${report.chain} · ${report.blocks} tested blocks`);
+  const rows = Object.entries(report.tiers).map(([tier, values]) => {
+    const row = document.createElement('tr');
+    const cells = [tier, `${values.coverage.toFixed(1)}%`, values.underpriceCount, `${values.overpriceP50.toFixed(1)}%`, `${values.overpriceP95.toFixed(1)}%`];
+    row.replaceChildren(...cells.map((value) => {
+      const cell = document.createElement('td');
+      cell.textContent = String(value);
+      return cell;
+    }));
+    return row;
   });
+  $('backtest-body').replaceChildren(...rows);
 }
 
-// Verify the hash chain integrity
-async function verifyChain() {
-  const el = document.getElementById('verify-result');
-  if (!window._events || window._events.length === 0) {
-    el.innerHTML = '<span class="yellow">No events loaded</span>';
-    return;
+async function renderApiState() {
+  try {
+    const [health, metrics] = await Promise.all([fetchJson('/health'), fetchJson('/metrics')]);
+    text('api-state', health.status === 'ok' ? 'API ONLINE' : 'API DEGRADED');
+    text('api-detail', `${metrics.executions.total} executions · ${metrics.auditChain.length} live audit events`);
+  } catch (error) {
+    text('api-state', 'STATIC EVIDENCE MODE');
+    text('api-detail', error instanceof Error ? error.message : String(error));
   }
-
-  const result = await verifyAuditEvents(window._events);
-  if (!result.valid) {
-    el.innerHTML = `<span class="red">✗ Chain broken at seq ${result.brokenAt}: ${result.error}</span>`;
-    return;
-  }
-  el.innerHTML = `<span class="green">✓ Chain valid — ${window._events.length} events, hashes recomputed</span>`;
-}
-window.verifyChain = verifyChain;
-
-// Render
-async function render() {
-  const data = await loadData();
-
-  let metrics, tape;
-
-  if (data.source === 'live') {
-    document.getElementById('revenue').textContent = '$' + (data.metrics.orders.total * 0.01).toFixed(2);
-    document.getElementById('total-exec').textContent = data.metrics.executions.total;
-    document.getElementById('success-rate').textContent = data.metrics.executions.total > 0
-      ? Math.round(data.metrics.executions.completed / data.metrics.executions.total * 100) + '%' : '—';
-    document.getElementById('chain-length').textContent = data.metrics.auditChain.length;
-    document.getElementById('last-hash').textContent = data.metrics.auditChain.lastHash.slice(0, 16) + '...';
-    return;
-  }
-
-  const events = data.events || [];
-  window._events = events;
-  metrics = computeMetrics(events);
-  tape = buildTape(events);
-
-  // Populate cards
-  document.getElementById('revenue').textContent = '$' + metrics.revenue.toFixed(2);
-  document.getElementById('gas-cost').textContent = '$0.00';
-  document.getElementById('realized-cost').textContent = '$0.00';
-  document.getElementById('margin').textContent = '100%';
-  document.getElementById('total-exec').textContent = metrics.totalExec;
-  document.getElementById('hit-rate').textContent = metrics.hitRate.toFixed(0) + '%';
-  document.getElementById('success-rate').textContent = metrics.successRate.toFixed(0) + '%';
-  document.getElementById('refunds').textContent = '0';
-  document.getElementById('chain-length').textContent = metrics.chainLength;
-  document.getElementById('last-hash').textContent = metrics.lastHash.slice(0, 20) + '...';
-
-  // Populate tape
-  const tbody = document.getElementById('tape-body');
-  tbody.innerHTML = tape.slice(0, 30).map(row => `
-    <tr>
-      <td>${row.orderId}</td>
-      <td>${row.jobType}</td>
-      <td>${row.tier}</td>
-      <td>${row.price}</td>
-      <td><span class="tag tag-${row.status.toLowerCase()}">${row.status}</span></td>
-      <td><code style="font-size:0.7rem">${row.tx}</code></td>
-      <td>${row.gas}</td>
-    </tr>
-  `).join('');
 }
 
-render();
+let auditEvents = [];
+async function verifyAudit(tamper = false) {
+  const events = structuredClone(auditEvents);
+  if (tamper && events[0]) events[0].payload = { ...events[0].payload, simulatedTamper: true };
+  if (!events.length) {
+    text('audit-result', 'No audit events loaded');
+    text('audit-detail', 'The committed benchmark ledger could not be loaded.');
+    return;
+  }
+  const result = await verifyAuditEvents(events);
+  if (result.valid) {
+    text('audit-result', `VALID · ${events.length} events recomputed`);
+    text('audit-detail', `Sequence, predecessor links and SHA-256 hashes match. Last hash ${events.at(-1).hash.slice(0, 20)}…`);
+    $('audit-result').style.color = 'var(--green)';
+  } else {
+    text('audit-result', `${tamper ? 'TAMPER DETECTED' : 'CHAIN INVALID'} · event ${result.brokenAt ?? 'unknown'}`);
+    text('audit-detail', result.error ?? 'Hash verification failed.');
+    $('audit-result').style.color = 'var(--red)';
+  }
+}
+
+async function start() {
+  const results = await Promise.allSettled([fetchJson('/phase7-evidence.json'), fetchJson('/backtest-report.json'), loadAuditEvents(), renderApiState()]);
+  if (results[0].status === 'fulfilled') renderEvidence(results[0].value);
+  else {
+    text('proof-status', 'EVIDENCE UNAVAILABLE');
+    text('proof-disclosure', results[0].reason instanceof Error ? results[0].reason.message : String(results[0].reason));
+  }
+  if (results[1].status === 'fulfilled') renderBacktest(results[1].value);
+  else {
+    const row = document.createElement('tr');
+    const cell = document.createElement('td');
+    cell.colSpan = 5;
+    cell.className = 'unavailable';
+    cell.textContent = 'Backtest unavailable';
+    row.append(cell);
+    $('backtest-body').replaceChildren(row);
+  }
+  if (results[2].status === 'fulfilled') {
+    auditEvents = results[2].value;
+    text('audit-detail', `${auditEvents.length} committed benchmark events loaded; verification has not been run.`);
+  }
+}
+
+$('verify-button').addEventListener('click', () => void verifyAudit(false));
+$('tamper-button').addEventListener('click', () => void verifyAudit(true));
+void start();

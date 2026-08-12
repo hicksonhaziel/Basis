@@ -1,0 +1,59 @@
+{
+  "schemaVersion": "basis-public-evidence:v1",
+  "preparedDate": "2026-08-12",
+  "environment": {
+    "network": "Base Sepolia",
+    "chainId": 84532,
+    "networkClass": "TESTNET",
+    "workflowVisibility": "PRIVATE",
+    "paymentStatus": "UNPAID",
+    "refundStatus": "NOT REFUNDED",
+    "publicationStatus": "NOT PUBLISHED"
+  },
+  "proof": {
+    "status": "AWAITING REDACTED PHASE 7 EVIDENCE",
+    "verifiedExecutionClaimed": false,
+    "disclosure": "The repository does not currently contain the Phase 7 transaction or KeeperHub execution record. Pinned policy facts below are implemented and tested; execution-specific fields remain undisclosed rather than inferred."
+  },
+  "job": {
+    "type": "morpho.accrue_interest",
+    "adapterVersion": "1.0.0",
+    "mode": "permissionless",
+    "nativeValueWei": "0",
+    "maxGasEstimate": "180000",
+    "minimumStalenessSeconds": "300"
+  },
+  "publicChain": {
+    "morphoAddress": "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb",
+    "morphoRuntimeCodeHash": "0xde5df0406e830f48506c94032a90a393b444b3de1cd5340d8c1a131a41189d3d",
+    "irmAddress": "0x46415998764C29aB2a25CbeA6254146D50D22687",
+    "irmRuntimeCodeHash": "0x9978b522abfe0f3b8279800375d833b9d9660ae4f6321a2efb1f1f98850a0cbe",
+    "marketId": "0xe36464b73c0c39836918f7b2b9a6f1a8b70d7bb9901b38f29544d9b96119862e",
+    "functionSelector": "0x151c1ade",
+    "accrueInterestTopic0": "0x9d9bd501d0657d7dfe415f779a620a62b78bc508ddc0891fbbd8b7ac0f8fce87",
+    "transactionHash": null,
+    "explorerUrl": null,
+    "blockNumber": null,
+    "blockTimestamp": null,
+    "event": null,
+    "historicalStateProof": null
+  },
+  "keeperHubReported": {
+    "executionId": null,
+    "sponsored": null,
+    "terminalStatus": null,
+    "receiptVerified": null
+  },
+  "basisLocal": {
+    "quoteId": null,
+    "orderId": null,
+    "executionId": null,
+    "independentRpcVerified": null,
+    "auditEvidenceIncluded": false
+  },
+  "trustBoundary": {
+    "publicChain": "Transaction, receipt, logs, bytecode and historical state are independently checkable only after a transaction hash is disclosed.",
+    "keeperHub": "Execution ID, sponsored status and KeeperHub receipt status are KeeperHub-reported facts.",
+    "basis": "Quote, order and execution IDs are Basis-local ledger facts; the signed quote is intentionally not public evidence."
+  }
+}

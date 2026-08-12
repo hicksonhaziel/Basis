@@ -1,0 +1,13 @@
+{
+  "chain": "Base",
+  "blocks": 1003,
+  "classification": "BASIS-REPORTED HISTORICAL BACKTEST — NOT LIVE EXECUTION",
+  "provenance": "Result copied from evidence/backtest-report.json; the original 1,024-block RPC response and immutable block range were not retained",
+  "method": "backtest/replay.ts uses a rolling 20-block eth_feeHistory window and evaluates the following block",
+  "tiers": {
+    "next-block": { "coverage": 94.3, "underpriceCount": 57, "overpriceP50": 53.8, "overpriceP95": 659.0, "total": 1003 },
+    "5m": { "coverage": 90.2, "underpriceCount": 98, "overpriceP50": 17.1, "overpriceP95": 112.9, "total": 1003 },
+    "1h": { "coverage": 75.1, "underpriceCount": 250, "overpriceP50": 2.5, "overpriceP95": 37.7, "total": 1003 },
+    "best-effort": { "coverage": 62.0, "underpriceCount": 381, "overpriceP50": 0.8, "overpriceP95": 8.2, "total": 1003 }
+  }
+}

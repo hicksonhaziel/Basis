@@ -65,10 +65,10 @@ Add a `dynamic` price mode to the marketplace payment schema:
 
 ### Security
 
-- Quotes are signed by the seller → cannot be tampered
-- Quotes expire → cannot be replayed after market conditions change
-- `maxPrice` cap → buyer wallet enforces a ceiling
-- `quoteId` is single-use → cannot be consumed twice
+- Quotes are authenticated by the seller; native Marketplace support should use an asymmetric signature or platform-verifiable attestation
+- Quotes expire and are single-use, preventing stale-price replay
+- The buyer wallet enforces `maxPrice` before payment
+- The seller revalidates the quote and canonical intent before execution
 
 ## Why This Matters
 
@@ -113,18 +113,20 @@ const quote = {
   priceUsd: computePrice(gasEstimate, feePercentile, ethUsd),
   expiresAt: new Date(Date.now() + 30_000).toISOString(),
 };
-quote.signature = hmacSign(quote, sellerSecret);
+quote.signature = sellerSign(canonicalize(quote), sellerPrivateKey);
 
-// 2. Buyer: verify and pay
-if (verifySignature(quote, sellerPubkey) && new Date(quote.expiresAt) > new Date()) {
+// 2. Buyer: verify the seller identity, enforce its cap, then pay
+if (verifySignature(canonicalize(quote), quote.signature, sellerPublicKey)
+    && new Decimal(quote.priceUsd).lte(maxPrice)
+    && new Date(quote.expiresAt) > new Date()) {
   await pay(quote.priceUsd);
   await callOrderEndpoint(quote.quoteId);
 }
 
-// 3. Seller: verify payment, execute
-if (isQuotePaid(quote.quoteId) && !isConsumed(quote.quoteId)) {
+// 3. Seller: verify platform payment authority and consume once
+if (await marketplacePaymentAuthorized(quote.quoteId) && !isConsumed(quote.quoteId)) {
   markConsumed(quote.quoteId);
-  await execute(quote.jobParams);
+  await executePersistedCanonicalIntent(quote.quoteId);
 }
 ```
 

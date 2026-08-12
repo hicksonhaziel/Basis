@@ -5,10 +5,10 @@
     "network": "Base Sepolia",
     "chainId": 84532,
     "networkClass": "TESTNET",
-    "workflowVisibility": "PRIVATE",
+    "workflowVisibility": "PUBLIC",
     "paymentStatus": "UNPAID",
     "refundStatus": "NOT REFUNDED",
-    "publicationStatus": "NOT PUBLISHED"
+    "publicationStatus": "PUBLISHED"
   },
   "proof": {
     "status": "AWAITING REDACTED PHASE 7 EVIDENCE",

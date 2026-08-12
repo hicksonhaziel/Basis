@@ -1,5 +1,7 @@
 # KeeperHub Marketplace storefront
 
+> **Current status:** the six workflow definitions passed provisioning validation and the publication command completed. This records publication intent and successful API mutation; it is not evidence of a paid buyer call or settlement.
+
 ## Architecture
 
 Basis uses six thin KeeperHub read-workflow storefronts and one stateful Basis backend:
@@ -33,4 +35,4 @@ KeeperHub uses `priceUsdcPerCall`; listing metadata includes slug, input schema,
 
 ## MCP calling limitation
 
-The direct REST endpoint `POST /api/mcp/workflows/<slug>/call` and aggregate MCP `call_workflow(slug, inputs)` pass the listing body. Current dedicated per-workflow MCP tools derive a Manual-trigger schema that accepts only an optional `type: "manual"` and silently drops extra fields. Until a live test proves otherwise, do not use `/mcp/w/<slug>` for Basis inputs. Test both aggregate MCP and direct REST after private provisioning and before publication.
+The direct REST endpoint `POST /api/mcp/workflows/<slug>/call` and aggregate MCP `call_workflow(slug, inputs)` pass the listing body. Dedicated per-workflow MCP tools have previously derived a Manual-trigger schema that accepts only an optional `type: "manual"` and can silently drop extra fields. Publication has completed, but a buyer-controlled end-to-end paid call has not been documented; validate the aggregate MCP or direct Marketplace REST path before claiming paid activation.

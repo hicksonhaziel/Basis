@@ -105,6 +105,7 @@ describe('morpho.accrue_interest exact receipt proof', () => {
     assert.equal(evaluateMorphoAccrualEvent(receipt()).valid, true);
     const failures = [
       receipt([], []), receipt([event()], [MORPHO_ADDRESS, MORPHO_ADDRESS]),
+      { ...receipt(), rawLogs: [{ address: MORPHO_ADDRESS, data: '0x' as const, topics: [`0x${'b'.repeat(64)}` as `0x${string}`] as const }] },
       receipt([{ ...event(), address: OTHER }], [OTHER]), receipt([event({ id: `0x${'b'.repeat(64)}` })]),
       receipt([event({ prevBorrowRate: '0' })]), receipt([event({ interest: '0' })]), receipt([event({ feeShares: '1' })]),
     ];

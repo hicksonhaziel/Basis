@@ -19,16 +19,24 @@ const EXECUTOR = '0x2222222222222222222222222222222222222222' as const;
 const HASH = `0x${'a'.repeat(64)}` as const;
 const OTHER_HASH = `0x${'b'.repeat(64)}` as const;
 const cleanups: Array<() => void> = [];
-afterEach(() => { preSubmitCalls = 0; while (cleanups.length) cleanups.pop()!(); });
+afterEach(() => { preSubmitCalls = 0; persistedValidationCalls = 0; recoveryEvents.length = 0; while (cleanups.length) cleanups.pop()!(); });
 
-interface LifecycleParams { failPostcondition?: boolean; failPreflight?: boolean; }
+interface LifecycleParams { failPostcondition?: boolean; failPreflight?: boolean; failPersistedValidation?: boolean; rebuiltCallMismatch?: boolean; rebuiltSimulationMismatch?: boolean; }
 let preSubmitCalls = 0;
+let persistedValidationCalls = 0;
+const recoveryEvents: string[] = [];
 
 const adapter: JobAdapter<LifecycleParams> = {
   meta: { jobType: 'test.lifecycle', version: '1.0.0', description: 'Lifecycle fixture', mode: 'permissionless', maxGasEstimate: 100_000n, sendsNativeValue: false, supportedChains: [8453] },
   validateParams(raw) { return raw as LifecycleParams; },
-  buildCall(_params, from) { return { to: TARGET, data: '0x1234', value: 0n, from }; },
-  buildSimulation() { return { contractAddress: TARGET, functionName: 'execute', functionArgs: '["7"]', abi: '[]' }; },
+  validatePersistedParams(raw) {
+    persistedValidationCalls++;
+    const params = raw as LifecycleParams;
+    if (params.failPersistedValidation) throw new Error('fixture persisted validation rejected');
+    return params;
+  },
+  buildCall(params, from) { return { to: params.rebuiltCallMismatch ? OTHER_HASH.slice(0, 42) as `0x${string}` : TARGET, data: '0x1234', value: 0n, from }; },
+  buildSimulation(params) { return { contractAddress: params.rebuiltSimulationMismatch ? OTHER_HASH.slice(0, 42) as `0x${string}` : TARGET, functionName: 'execute', functionArgs: '["7"]', abi: '[]' }; },
   canonicalIntent(_params, chainId, bucket) { return { fields: [], canonical: `test.lifecycle|${chainId}|${bucket}` }; },
   async preSubmitPreflight(params) { preSubmitCalls++; if (params.failPreflight) throw new Error('fixture preflight rejected'); },
   verifyPostconditions(params) { return [{ passed: !params.failPostcondition, check: 'fixture postcondition' }]; },
@@ -58,6 +66,17 @@ function makeQuote(ledger: Ledger, params: LifecycleParams = {}): Quote {
   }, KEY);
   ledger.insertQuote({ quoteId: quote.quoteId, jobHash: quote.jobHash, jobType: quote.jobType, chainId: quote.chainId, deadlineTier: quote.deadlineTier, deadlineAt: quote.deadlineAt, expiresAt: quote.expiresAt, priceUsd: quote.priceUsd, paymentTier: quote.paymentTier, pricingModelVersion: quote.pricingModelVersion, breakdown: quote.breakdown as unknown as Record<string, unknown>, simulation: quote.simulation as unknown as Record<string, unknown>, intent: quote.intent as unknown as Record<string, unknown>, oracleEvidence: quote.oracleEvidence as unknown as Record<string, unknown>, canonicalizationFormat: quote.canonicalizationFormat, signatureFormat: quote.signatureFormat, refundRecipient: quote.refundRecipient, signature: quote.signature, issuedAt: quote.issuedAt });
   return quote;
+}
+
+function admitRecoveryExecution(ledger: Ledger, orderId: string, params: LifecycleParams = {}): PersistedExecutionIntent {
+  const quote = makeQuote(ledger, params);
+  const intent: PersistedExecutionIntent = { ...quote.intent, quoteId: quote.quoteId, orderId, idempotencyKey: quote.jobHash };
+  ledger.admitOrder({
+    quoteId: quote.quoteId, orderId, executionId: `e_${orderId}`, authorityKind: 'AUTHENTICATED_PRIVATE_WORKFLOW',
+    callbackAuthKind: 'AUTHENTICATED_WORKFLOW_CALLBACK', settlementMetadataStatus: 'NOT_APPLICABLE', refundRecipient: quote.refundRecipient,
+    paymentAmountUsd: quote.priceUsd, idempotencyKey: quote.jobHash, chainId: 8453, intent, outboundRequest: keeperHubRequest(intent),
+  });
+  return intent;
 }
 
 function simulation(overrides: Partial<SimulationSuccess> = {}): SimulationSuccess {
@@ -195,8 +214,8 @@ describe('atomicity and restart reconciliation', () => {
   });
 
   it('recovers a crash immediately after atomic admission', async () => {
-    const ledger = makeLedger(); const quote = makeQuote(ledger); const intent: PersistedExecutionIntent = { ...quote.intent, quoteId: quote.quoteId, orderId: 'o_admitted', idempotencyKey: quote.jobHash };
-    ledger.admitOrder({ quoteId: quote.quoteId, orderId: 'o_admitted', executionId: 'e_admitted', authorityKind: 'AUTHENTICATED_PRIVATE_WORKFLOW', callbackAuthKind: 'AUTHENTICATED_WORKFLOW_CALLBACK', settlementMetadataStatus: 'NOT_APPLICABLE', refundRecipient: quote.refundRecipient, paymentAmountUsd: quote.priceUsd, idempotencyKey: quote.jobHash, chainId: 8453, intent, outboundRequest: keeperHubRequest(intent) });
+    const ledger = makeLedger();
+    admitRecoveryExecution(ledger, 'o_admitted');
     let simulations = 0; let sends = 0;
     const worker = new ReconciliationWorker(ledger, {
       simulate: async () => { simulations++; return simulation(); },
@@ -204,8 +223,66 @@ describe('atomicity and restart reconciliation', () => {
       getExecutionStatus: async () => ({ status: status({ executionId: 'kh_admitted' }), pollIntervalHint: 0 }),
     } as never, () => rpc());
     await worker.runOnce(true);
-    assert.equal(simulations, 1); assert.equal(sends, 1); assert.equal(preSubmitCalls, 0);
+    assert.equal(persistedValidationCalls, 1); assert.equal(simulations, 1); assert.equal(preSubmitCalls, 1); assert.equal(sends, 1);
     assert.equal((ledger.getDb().prepare("SELECT state FROM orders WHERE order_id='o_admitted'").get() as any).state, 'SUCCEEDED');
+  });
+
+  it('rejects invalid persisted recovery parameters before simulation or submission', async () => {
+    const ledger = makeLedger();
+    admitRecoveryExecution(ledger, 'o_invalid_persisted', { failPersistedValidation: true });
+    let simulations = 0; let sends = 0;
+    const worker = new ReconciliationWorker(ledger, {
+      simulate: async () => { simulations++; return simulation(); },
+      executeContractCall: async () => { sends++; throw new Error('must not send'); },
+    } as never, () => rpc());
+    await worker.runOnce(true);
+    assert.equal(persistedValidationCalls, 1); assert.equal(simulations, 0); assert.equal(preSubmitCalls, 0); assert.equal(sends, 0);
+    assert.equal((ledger.getDb().prepare("SELECT state FROM orders WHERE order_id='o_invalid_persisted'").get() as any).state, 'FAILED');
+  });
+
+  for (const [name, params] of [
+    ['rebuilt call', { rebuiltCallMismatch: true }],
+    ['rebuilt simulation', { rebuiltSimulationMismatch: true }],
+  ] as const) {
+    it(`rejects a ${name} mismatch before recovery simulation or submission`, async () => {
+      const ledger = makeLedger();
+      admitRecoveryExecution(ledger, `o_${name.replace(' ', '_')}`, params);
+      let simulations = 0; let sends = 0;
+      const worker = new ReconciliationWorker(ledger, {
+        simulate: async () => { simulations++; return simulation(); },
+        executeContractCall: async () => { sends++; throw new Error('must not send'); },
+      } as never, () => rpc());
+      await worker.runOnce(true);
+      assert.equal(persistedValidationCalls, 1); assert.equal(simulations, 0); assert.equal(preSubmitCalls, 0); assert.equal(sends, 0);
+      assert.equal((ledger.getDb().prepare('SELECT state FROM orders').get() as any).state, 'FAILED');
+    });
+  }
+
+  it('rejects recovered pre-submit preflight before broadcasting', async () => {
+    const ledger = makeLedger();
+    admitRecoveryExecution(ledger, 'o_preflight', { failPreflight: true });
+    let simulations = 0; let sends = 0;
+    const worker = new ReconciliationWorker(ledger, {
+      simulate: async () => { simulations++; return simulation(); },
+      executeContractCall: async () => { sends++; throw new Error('must not send'); },
+    } as never, () => rpc());
+    await worker.runOnce(true);
+    assert.equal(persistedValidationCalls, 1); assert.equal(simulations, 1); assert.equal(preSubmitCalls, 1); assert.equal(sends, 0);
+    assert.equal((ledger.getDb().prepare("SELECT state FROM orders WHERE order_id='o_preflight'").get() as any).state, 'FAILED');
+  });
+
+  it('moves ambiguous recovered EXECUTING work to UNCERTAIN without rebroadcast when preflight fails', async () => {
+    const ledger = makeLedger();
+    admitRecoveryExecution(ledger, 'o_ambiguous', { failPreflight: true });
+    ledger.transitionOrder('o_ambiguous', 'RESIMULATING', 'fixture');
+    ledger.transitionOrder('o_ambiguous', 'EXECUTING', 'submission outcome is unknown');
+    let sends = 0;
+    const worker = new ReconciliationWorker(ledger, {
+      executeContractCall: async () => { sends++; throw new Error('must not send'); },
+    } as never, () => rpc());
+    await worker.runOnce(true);
+    assert.equal(persistedValidationCalls, 1); assert.equal(preSubmitCalls, 1); assert.equal(sends, 0);
+    assert.equal((ledger.getDb().prepare("SELECT state FROM orders WHERE order_id='o_ambiguous'").get() as any).state, 'UNCERTAIN');
   });
 
   it('periodic reconciliation does not race active foreground EXECUTING work', async () => {

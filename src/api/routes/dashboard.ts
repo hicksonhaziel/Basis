@@ -10,6 +10,7 @@ interface DashboardAsset {
 }
 
 const assets: Record<string, DashboardAsset> = {
+  '/basis-wordmark.svg': { file: 'basis-wordmark.svg', contentType: 'image/svg+xml; charset=utf-8' },
   '/app.mjs': { file: 'app.mjs', contentType: 'text/javascript; charset=utf-8' },
   '/audit-chain.mjs': { file: 'audit-chain.mjs', contentType: 'text/javascript; charset=utf-8' },
   '/phase7-evidence.json': { file: 'phase7-evidence.json', contentType: 'application/json; charset=utf-8' },

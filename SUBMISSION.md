@@ -60,7 +60,7 @@ Paid order execution remains KeeperHub-hosted so the local MCP cannot bypass pay
 - Recovery that reconstructs persisted intent and never blindly retries uncertainty
 - Independent RPC and adapter-specific receipt verification
 - Fixed, quote-bound refund policy with default-off broadcasting
-- Public evidence console with provenance labels and browser-side audit-chain verification
+- Public execution dashboard with a real transaction tape and explicit live-versus-historical labels
 
 ## Delivered adapters
 
@@ -91,12 +91,12 @@ Basis demonstrates the tier-ladder workaround required by fixed-price Marketplac
 
 ## Judge walkthrough
 
-1. Open the live evidence console and read the status/provenance labels.
-2. Run `npm run mcp` and list the four local tools.
-3. Use `basis_marketplace_catalog` to inspect the six KeeperHub workflows.
-4. Request a testnet WETH quote; observe that no transaction is sent.
-5. Verify `dashboard/evidence.jsonl` locally.
-6. Review recovery, independent verification and refund boundaries in the linked docs.
+1. Open the live dashboard at `#executions` and inspect the real Base Sepolia transaction tape.
+2. Open the representative Basescan transaction and confirm its public success.
+3. Show the architecture diagram and explain the Basis/KeeperHub/chain boundary.
+4. Show the six public KeeperHub Marketplace workflows and expected fields.
+5. Use `basis_marketplace_catalog`, then show a small Base Sepolia WETH quote that sends no transaction.
+6. Show the benchmark metrics, historical pricing coverage, and dynamic-pricing bounty proposal.
 
 ## Limitations
 

@@ -6,7 +6,7 @@
 
 **Deterministic, deadline-aware onchain execution through KeeperHub.**
 
-[Live dashboard](https://outstanding-motivation-production-c0ff.up.railway.app/) · [Submission brief](SUBMISSION.md) · [Architecture](docs/ARCHITECTURE.md) · [MCP guide](docs/MCP.md) · [Public evidence](docs/EVIDENCE.md)
+[Live dashboard](https://outstanding-motivation-production-c0ff.up.railway.app/) · [Demo video](https://youtu.be/UKIxrP7vnmY) · [Submission brief](SUBMISSION.md) · [Architecture](docs/ARCHITECTURE.md) · [MCP guide](docs/MCP.md) · [Public evidence](docs/EVIDENCE.md)
 
 ![Node.js 22](https://img.shields.io/badge/Node.js-22-43853d?style=flat-square) ![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178c6?style=flat-square) ![MCP](https://img.shields.io/badge/MCP-1.30-7c3aed?style=flat-square) ![Network](https://img.shields.io/badge/proof-Base_Sepolia-0052ff?style=flat-square)
 
